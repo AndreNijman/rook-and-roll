@@ -21,7 +21,8 @@
   --title: 'Silkscreen', 'Pixelify Sans', ui-monospace, monospace;
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; min-height: 100%; color: var(--paper); font-family: var(--font); }
+html, body { margin: 0; min-height: 100%; color: var(--paper); font-family: var(--font); font-variant-ligatures: none; }
+/* Pixelify Sans draws its "fi" ligature like an A ("Anish"), so ligatures stay off. */
 body {
   background-color: var(--bg);
   /* A faint 2-tone checker, like a board seen through rain. */
@@ -120,7 +121,7 @@ canvas.sprite { image-rendering: pixelated; display: block; }
 .side-pick .q { font-family: var(--title); font-size: 30px; color: var(--ink); }
 
 /* ---------- game layout ---------- */
-.play, .analysis { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+.play, .analysis, .puzzles { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 .game { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; padding: 4px 24px 24px; }
 .stage { min-height: 0; min-width: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 10px; }
 .stage.with-eval { flex-direction: row; }
@@ -130,7 +131,7 @@ canvas.board { image-rendering: pixelated; display: block; touch-action: none; b
 .side { display: flex; flex-direction: column; gap: 10px; min-height: 0; overflow: auto; padding: 16px; margin: 9px 9px 21px; }
 .side p { margin: 0; }
 @media (max-width: 860px) {
-  .play, .analysis { height: auto; }
+  .play, .analysis, .puzzles { height: auto; }
   .game { grid-template-columns: 1fr; padding: 4px 12px 24px; }
   .side { overflow: visible; }
 }
@@ -190,3 +191,23 @@ details.io summary { cursor: pointer; color: var(--sky); font-family: var(--titl
 .modal { position: fixed; inset: 0; z-index: 40; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(20, 12, 30, 0.6); }
 .modal .panel { max-width: 460px; width: 100%; }
 .result { display: flex; gap: 16px; align-items: center; }
+
+/* ---------- puzzles ---------- */
+.puzzle-head .big, .rush-final .big { font-family: var(--title); font-size: 40px; color: var(--gold); text-shadow: 3px 3px 0 var(--ink); }
+.rating-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
+.rating-line .hint { flex-basis: 100%; }
+.delta { font-family: var(--title); font-size: 16px; }
+.delta.up { color: var(--moss); }
+.delta.down { color: var(--red); }
+.puzzle-status { font-size: 17px; color: var(--bone); min-height: 2.6em; }
+.puzzle-info { display: flex; flex-direction: column; gap: 8px; }
+.themes { display: flex; flex-wrap: wrap; gap: 6px; }
+.themes .tag { background: var(--plum); font-size: 12px; }
+.rush-meta { display: flex; justify-content: space-between; align-items: center; margin: 6px 0; }
+.clock { font-family: var(--title); font-size: 28px; color: var(--bone); }
+.clock.low { color: var(--red); }
+.strikes { display: flex; gap: 6px; }
+.strikes .x { font-family: var(--title); font-size: 18px; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,0.2); box-shadow: 0 0 0 2px var(--ink); background: rgba(0,0,0,0.3); }
+.strikes .x.on { color: var(--paper); background: var(--red); }
+.credits.small { font-size: 12px; color: var(--muted); margin-top: auto; }
+.rush-final { margin: 6px 0; }

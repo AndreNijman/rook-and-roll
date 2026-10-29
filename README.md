@@ -8,7 +8,10 @@ Pixel-art chess for [games.andrenijman.com](https://games.andrenijman.com), serv
 - **Analysis**: live multi-line engine evaluation, PGN/FEN import and export.
 - **Game review**: every move graded (best, excellent, good, inaccuracy, mistake, blunder)
   by lost win chance, with Lichess-style accuracy for both sides.
-- Puzzles and online play are on the way.
+- **Puzzles**: about 5,000 puzzles from the [Lichess puzzle database](https://database.lichess.org/#puzzles)
+  (CC0), rated with Glicko-2, plus Puzzle Rush (three minutes, three strikes).
+  Rebuild the shards with `zstd -dc lichess_db_puzzle.csv.zst | npx tsx tools/puzzles.ts public/puzzles`.
+- Online play is on the way.
 
 Signed-in games accounts keep their profile (board theme, bot record, puzzle rating) on
 the games guard at `/_guard/profile`; guests keep it in the browser.

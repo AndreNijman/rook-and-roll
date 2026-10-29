@@ -11,6 +11,8 @@ export interface Profile {
   theme: string;
   puzzle: { rating: number; rd: number; vol: number; solved: number; failed: number; recent: string[] };
   bots: Record<string, BotRecord>;
+  /** Best Puzzle Rush score. */
+  rushBest: number;
 }
 
 export interface Status { signedIn: boolean; username: string | null }
@@ -20,6 +22,7 @@ const fresh = (): Profile => ({
   v: 1, updatedAt: 0, theme: 'Walnut',
   puzzle: { rating: 1500, rd: 350, vol: 0.06, solved: 0, failed: 0, recent: [] },
   bots: {},
+  rushBest: 0,
 });
 
 let status: Status = { signedIn: false, username: null };
