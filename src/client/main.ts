@@ -8,6 +8,7 @@ import { drawPiece } from './art/pieces';
 import { blit, img, toCanvas } from './art/pixel';
 import { analysisScreen } from './modes/analysis';
 import { pickScreen } from './modes/pick';
+import { onlineGame, onlineLobby } from './modes/online';
 import { puzzlesScreen } from './modes/puzzles';
 import { playScreen, savedGame } from './modes/play';
 import { BOTS } from './bots';
@@ -35,7 +36,9 @@ function route(): void {
   if (hash === 'review') return show(analysisScreen(true));
   if (hash === 'puzzles') return show(puzzlesScreen(false));
   if (hash === 'rush') return show(puzzlesScreen(true));
-  if (hash === 'online') return show(soonScreen(hash));
+  if (hash === 'online') return show(onlineLobby());
+  const game = hash.match(/^online\/([a-z0-9]{8})$/);
+  if (game) return show(onlineGame(game[1]));
   show(homeScreen());
 }
 
@@ -65,21 +68,14 @@ function homeScreen(): Screen {
       h('div.hero', {},
         h('div.lineup', {}, ...BOTS.slice(0, 6).map((b) => portrait(b, 3))),
         h('h1.title', {}, 'ROOK ', h('span.amp', {}, '&'), ' ROLL'),
-        h('p.tagline', {}, 'Pixel chess. Beat the bots, solve puzzles, review your games.')),
+        h('p.tagline', {}, 'Pixel chess. Play people and bots, solve puzzles, review your games.')),
       h('nav.tiles', {},
         tile('bots', resume ? 'Continue game' : 'Play the computer', resume ? `Your game against ${BOTS.find((b) => b.id === resume.bot)?.name} is waiting.` : 'Nine bots, from beginner to full-strength Stockfish.'),
-        tile('online', 'Play online', 'Rated games against people, or a link for a friend.', true),
+        tile('online', 'Play online', 'Rated games against people, or a link for a friend.'),
         tile('puzzles', 'Puzzles', 'Rated tactics that keep pace with you, and Puzzle Rush against the clock.'),
         tile('analysis', 'Analysis', 'Explore positions with the engine, import a game, review it.')),
       h('p.credits', {}, 'Engine: ', h('a', { href: 'https://stockfishchess.org', target: '_blank', rel: 'noopener' }, 'Stockfish'), ' (GPLv3, ', h('a', { href: 'engine/COPYING.txt', target: '_blank' }, 'licence'), ').')));
   return { el };
-}
-
-function soonScreen(kind: string): Screen {
-  return {
-    el: h('div.screen', {}, topbar(kind === 'online' ? 'Play online' : 'Puzzles'),
-      h('div.panel', {}, h('h2', {}, 'Coming soon'), h('p', {}, 'This part of ROOK & ROLL is still being built.'), h('a.button', { href: '#' }, 'Back'))),
-  };
 }
 
 window.addEventListener('hashchange', route);

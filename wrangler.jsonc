@@ -1,0 +1,41 @@
+// ROOK & ROLL online relay (src/worker/index.ts): games and the quick-match
+// queue as Durable Objects. `npm run relay:dev` runs it locally on :8797 and
+// `VITE_RELAY=ws://localhost:8797/ws npm run dev` points the client at it.
+//
+// Production is env.production, deployed with `rime secret use cloudflare
+// cloudflare.wrangler.deploy chess-relay` (wrangler deploy --env production).
+// It has NO route and no workers.dev URL on purpose: the only way in is
+// games-guard's CHESS_RELAY service binding (/_guard/chess-ws on
+// chess.andrenijman.com), which is why the relay can trust the account
+// headers the guard sets. Deploy this before the guard that binds to it.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "chess-relay",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-08-11",
+  "workers_dev": false,
+  "observability": { "enabled": true },
+  "durable_objects": {
+    "bindings": [
+      { "name": "LOBBY", "class_name": "Lobby" },
+      { "name": "GAMES", "class_name": "Game" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Lobby", "Game"] }],
+  // The same Worker name, so production keeps its Durable Object namespaces.
+  // Bindings are not inherited by an environment, so they repeat.
+  "env": {
+    "production": {
+      "name": "chess-relay",
+      "workers_dev": false,
+      "preview_urls": false,
+      "observability": { "enabled": true },
+      "durable_objects": {
+        "bindings": [
+          { "name": "LOBBY", "class_name": "Lobby" },
+          { "name": "GAMES", "class_name": "Game" }
+        ]
+      }
+    }
+  }
+}

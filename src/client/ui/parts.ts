@@ -5,7 +5,7 @@ import { getProfile, loginUrl, me, saveProfile } from '../account';
 import { THEMES, type BoardTheme } from '../art/board';
 import { PIECE_TYPES, drawPiece, type Side } from '../art/pieces';
 import { toCanvas } from '../art/pixel';
-import { drawPortrait, drawStorm } from '../art/portrait';
+import { drawPortrait, drawStorm, type Hair } from '../art/portrait';
 import { isMuted, setMuted } from '../audio';
 import type { Bot } from '../bots';
 import { CLASS_INFO, type MoveClass } from '../review';
@@ -48,6 +48,24 @@ export function portrait(bot: Bot, scale: number): HTMLCanvasElement {
   if (!c) {
     c = toCanvas(bot.id === 'storm' ? drawStorm() : drawPortrait(bot.look, bot.hair, bot.rating));
     portraitCache.set(bot.id, c);
+  }
+  return canvasOf(c, scale, 'sprite portrait');
+}
+
+const SKIN = ['#f4c8a0', '#d8a070', '#b07850', '#8a5a3a', '#f0d0b8', '#c89070'];
+const HAIR = ['#5a3a28', '#e8a040', '#26181e', '#c8c0e0', '#d8484a', '#8a6a48'];
+const SHIRT = ['#8ad05a', '#5ab0d8', '#f0d060', '#d8484a', '#7a6290', '#efe4cc'];
+const STYLES: Hair[] = ['short', 'long', 'bun', 'spiky', 'bald', 'hood'];
+
+/** A pixel portrait for an online player, the same for the same name every time. */
+export function playerPortrait(name: string, scale: number): HTMLCanvasElement {
+  let c = portraitCache.get(`player:${name}`);
+  if (!c) {
+    let x = 2166136261;
+    for (const ch of name) x = Math.imul(x ^ ch.charCodeAt(0), 16777619) >>> 0;
+    const pick = <T>(a: T[], shift: number) => a[(x >>> shift) % a.length];
+    c = toCanvas(drawPortrait([pick(SKIN, 0), pick(HAIR, 5), pick(SHIRT, 10)], pick(STYLES, 15), x % 9973));
+    portraitCache.set(`player:${name}`, c);
   }
   return canvasOf(c, scale, 'sprite portrait');
 }

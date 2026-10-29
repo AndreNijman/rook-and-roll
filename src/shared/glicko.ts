@@ -18,6 +18,13 @@ export const provisional = (r: Rating) => r.rd > 110;
 const g = (phi: number) => 1 / Math.sqrt(1 + (3 * phi * phi) / (Math.PI * Math.PI));
 const expected = (mu: number, muJ: number, phiJ: number) => 1 / (1 + Math.exp(-g(phiJ) * (mu - muJ)));
 
+/** Deviation grows back over `periods` idle rating periods (step 6 of the paper, repeated). */
+export function decay(r: Rating, periods: number): Rating {
+  if (periods <= 0) return r;
+  const phi = r.rd / SCALE;
+  return { ...r, rd: Math.min(RD_MAX, Math.sqrt(phi * phi + periods * r.vol * r.vol) * SCALE) };
+}
+
 export function update(player: Rating, results: Result[], tau = 0.5, bounds = true): Rating {
   const mu = (player.rating - 1500) / SCALE;
   const phi = player.rd / SCALE;
