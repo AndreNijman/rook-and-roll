@@ -67,6 +67,7 @@ export function playerBar(): { el: HTMLElement; set(o: { avatar?: Node; name: st
       name.textContent = o.name;
       sub.textContent = o.sub ?? '';
       status.textContent = o.status ?? '';
+      caps.classList.toggle('dark', o.capturedSide === 'b' && Boolean(o.captured?.length));
       caps.replaceChildren(...(o.captured ?? []).map((t) => pieceIcon(t, o.capturedSide ?? 'b')), o.lead ? h('span.lead', {}, `+${o.lead}`) : '');
     },
   };

@@ -141,8 +141,9 @@ canvas.board { image-rendering: pixelated; display: block; touch-action: none; b
 .who { flex: 1; min-width: 0; }
 .who b { font-family: var(--title); font-size: 14px; }
 .who .sub { color: var(--muted); font-size: 13px; }
-.caps { display: flex; align-items: center; min-height: 16px; flex-wrap: wrap; }
+.caps { display: inline-flex; align-items: center; min-height: 16px; flex-wrap: wrap; }
 .caps canvas { margin-right: -5px; }
+.caps.dark { padding: 0 2px; background: rgba(239, 228, 204, 0.55); }
 .caps .lead { margin-left: 10px; font-size: 13px; color: var(--muted); }
 .bar .status { font-size: 14px; color: var(--gold); }
 
