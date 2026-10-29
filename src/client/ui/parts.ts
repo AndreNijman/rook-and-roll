@@ -27,7 +27,7 @@ export function topbar(title: string, onTheme?: (t: BoardTheme) => void): HTMLEl
     onTheme?.(next);
   };
   return h('header.topbar', {},
-    title ? h('a.back', { href: '#' }, '◂ PAWNSTORM') : h('span.logo', {}, 'PAWNSTORM'),
+    title ? h('a.back', { href: '#' }, '◂ ROOK ', h('span.amp', {}, '&'), ' ROLL') : h('span.logo', {}, 'ROOK ', h('span.amp', {}, '&'), ' ROLL'),
     title ? h('h1', {}, title) : null,
     h('div.row.tools', {},
       theme, sound, account()));

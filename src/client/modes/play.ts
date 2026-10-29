@@ -13,7 +13,7 @@ import { h } from '../ui/dom';
 import { currentTheme, modal, moveList, playerBar, portrait, topbar, youAvatar } from '../ui/parts';
 import type { Screen } from '../main';
 
-const SAVE = 'pawnstorm:botgame';
+const SAVE = 'rookroll:botgame';
 
 export interface SavedGame { bot: string; side: Side; pgn: string; over?: boolean }
 
@@ -63,12 +63,22 @@ export function playScreen(): Screen | null {
       h('aside.side.panel', {},
         h('div.botline', {}, portrait(bot, 3), h('div', {}, h('h2', {}, bot.name), h('p.hint', {}, `${bot.rating} · ${bot.blurb}`))),
         list, status,
-        h('div.row', {}, hintBtn, backBtn, h('button', { onclick: () => board.flip() }, 'Flip'), resignBtn),
+        h('div.row.nav', {},
+          h('button', { onclick: () => step(-1), 'aria-label': 'Previous move' }, '◂'),
+          h('button', { onclick: () => step(1), 'aria-label': 'Next move' }, '▸'),
+          h('button', { onclick: () => step(Infinity), 'aria-label': 'Latest move' }, '▸▸'),
+          h('button', { onclick: () => board.flip() }, 'Flip')),
+        h('div.row', {}, hintBtn, backBtn, resignBtn),
         after)));
 
   board.onMove = (from, to, promotion) => userMove(from, to, promotion);
 
   function history(): Move[] { return chess.history({ verbose: true }); }
+
+  function step(d: number): void {
+    ply = Math.max(0, Math.min(history().length, ply + d));
+    render();
+  }
 
   function save(): void {
     try { localStorage.setItem(SAVE, JSON.stringify({ bot: bot!.id, side: me, pgn: chess.pgn(), over: Boolean(over) })); } catch { /* storage blocked */ }
@@ -84,7 +94,7 @@ export function playScreen(): Screen | null {
     top.set({ avatar: portrait(bot!, 2), name: bot!.name, sub: String(bot!.rating), captured: mat[them].captured, capturedSide: me, lead: mat[them].lead, status: thinking ? 'thinking…' : '' });
     bottom.set({ avatar: youAvatar(), name: 'You', captured: mat[me].captured, capturedSide: them, lead: mat[me].lead });
     list.replaceChildren(moveList(moves, ply, (p) => { ply = p; render(); }));
-    status.textContent = over ? describe(over) : !live ? 'Looking back. Press ▸ or a later move to return.' : chess.turn() === me ? (chess.inCheck() ? 'Check! Your move.' : 'Your move.') : `${bot!.name} is thinking…`;
+    status.textContent = over ? describe(over) : !live ? 'Looking back. Press ▸▸ to return to the game.' : chess.turn() === me ? (chess.inCheck() ? 'Check! Your move.' : 'Your move.') : `${bot!.name} is thinking…`;
     hintBtn.disabled = Boolean(over) || thinking || !live;
     backBtn.disabled = Boolean(over) || thinking || moves.length < 1 || (moves.length < 2 && me === 'w');
     resignBtn.disabled = Boolean(over);
@@ -192,7 +202,7 @@ export function playScreen(): Screen | null {
   function toReview(): void {
     chess.setHeader('White', me === 'w' ? 'You' : bot!.name);
     chess.setHeader('Black', me === 'b' ? 'You' : bot!.name);
-    try { sessionStorage.setItem('pawnstorm:review', chess.pgn()); } catch { /* storage blocked */ }
+    try { sessionStorage.setItem('rookroll:review', chess.pgn()); } catch { /* storage blocked */ }
     location.hash = '#review';
   }
 
@@ -201,6 +211,7 @@ export function playScreen(): Screen | null {
     const n = history().length;
     if (e.key === 'ArrowLeft') ply = Math.max(0, ply - 1);
     else if (e.key === 'ArrowRight') ply = Math.min(n, ply + 1);
+    else if (e.key === 'End') ply = n;
     else if (e.key === 'f') { board.flip(); return; }
     else return;
     e.preventDefault();

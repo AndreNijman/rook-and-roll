@@ -1,4 +1,4 @@
-# PAWNSTORM
+# ROOK & ROLL
 
 Pixel-art chess for [games.andrenijman.com](https://games.andrenijman.com), served at
 [chess.andrenijman.com](https://chess.andrenijman.com).

@@ -1,4 +1,4 @@
-// PAWNSTORM: screens are routed by the URL hash, so the browser's back
+// ROOK & ROLL: screens are routed by the URL hash, so the browser's back
 // button works inside the hub's frame and links can point at a mode.
 
 import './style.css';
@@ -20,6 +20,7 @@ let current: Screen | null = null;
 
 function show(screen: Screen): void {
   current?.dispose?.();
+  for (const m of document.querySelectorAll('.modal')) m.remove();
   current = screen;
   root.replaceChildren(screen.el);
   window.scrollTo(0, 0);
@@ -60,7 +61,7 @@ function homeScreen(): Screen {
     h('main.home-main', {},
       h('div.hero', {},
         h('div.lineup', {}, ...BOTS.slice(0, 6).map((b) => portrait(b, 3))),
-        h('h1.title', {}, 'PAWNSTORM'),
+        h('h1.title', {}, 'ROOK ', h('span.amp', {}, '&'), ' ROLL'),
         h('p.tagline', {}, 'Pixel chess. Beat the bots, solve puzzles, review your games.')),
       h('nav.tiles', {},
         tile('bots', resume ? 'Continue game' : 'Play the computer', resume ? `Your game against ${BOTS.find((b) => b.id === resume.bot)?.name} is waiting.` : 'Nine bots, from beginner to full-strength Stockfish.'),
@@ -74,12 +75,15 @@ function homeScreen(): Screen {
 function soonScreen(kind: string): Screen {
   return {
     el: h('div.screen', {}, topbar(kind === 'online' ? 'Play online' : 'Puzzles'),
-      h('div.panel', {}, h('h2', {}, 'Coming soon'), h('p', {}, 'This part of PAWNSTORM is still being built.'), h('a.button', { href: '#' }, 'Back'))),
+      h('div.panel', {}, h('h2', {}, 'Coming soon'), h('p', {}, 'This part of ROOK & ROLL is still being built.'), h('a.button', { href: '#' }, 'Back'))),
   };
 }
 
 window.addEventListener('hashchange', route);
 route();
-void connect().then(() => {
-  for (const slot of document.querySelectorAll('.account')) slot.replaceWith(account());
+void connect().then((replaced) => {
+  // A newer profile from the account changes the theme and records shown;
+  // the bot game itself lives in this browser, so re-showing it is safe.
+  if (replaced) route();
+  else for (const slot of document.querySelectorAll('.account')) slot.replaceWith(account());
 });

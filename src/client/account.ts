@@ -15,7 +15,7 @@ export interface Profile {
 
 export interface Status { signedIn: boolean; username: string | null }
 
-const KEY = 'pawnstorm:profile';
+const KEY = 'rookroll:profile';
 const fresh = (): Profile => ({
   v: 1, updatedAt: 0, theme: 'Walnut',
   puzzle: { rating: 1500, rd: 350, vol: 0.06, solved: 0, failed: 0, recent: [] },
@@ -53,8 +53,11 @@ export function saveProfile(change: (p: Profile) => void): void {
   }
 }
 
-/** Read the guard's status and, for an account, pull the stored profile. */
-export async function connect(): Promise<Status> {
+/**
+ * Read the guard's status and, for an account, pull the stored profile.
+ * True when that replaced the profile the page started with.
+ */
+export async function connect(): Promise<boolean> {
   try {
     const res = await fetch('/_guard/status', { cache: 'no-store', credentials: 'same-origin' });
     const s = res.ok ? await res.json() : null;
@@ -62,16 +65,17 @@ export async function connect(): Promise<Status> {
   } catch {
     // No guard (local dev, or GitHub Pages directly): play as a guest.
   }
-  if (!status.signedIn) return status;
+  if (!status.signedIn) return false;
   try {
     const res = await fetch('/_guard/profile', { cache: 'no-store', credentials: 'same-origin' });
     const remote = res.ok ? (await res.json()).profile : null;
     if (remote?.v === 1 && remote.updatedAt > profile.updatedAt) {
       profile = { ...fresh(), ...remote, puzzle: { ...fresh().puzzle, ...remote.puzzle } };
       try { localStorage.setItem(KEY, JSON.stringify(profile)); } catch { /* storage blocked */ }
+      return true;
     } else if (profile.updatedAt > (remote?.updatedAt ?? 0)) {
       saveProfile(() => {});
     }
   } catch { /* keep the local copy */ }
-  return status;
+  return false;
 }

@@ -1,4 +1,4 @@
-/* PAWNSTORM: the board is canvas; everything else is DOM in the same
+/* ROOK & ROLL: the board is canvas; everything else is DOM in the same
    paper/ink widget language as the other games, under a stormy night sky. */
 :root {
   --ink: #26181e;
@@ -76,6 +76,8 @@ canvas.sprite { image-rendering: pixelated; display: block; }
 .topbar h1 { font-family: var(--title); font-size: 18px; margin: 0; flex: 1; color: var(--paper); }
 .topbar .logo, .topbar .back { font-family: var(--title); font-size: 16px; color: var(--gold); text-decoration: none; flex: none; }
 .topbar .logo { flex: 1; }
+.topbar .logo, .topbar .back { white-space: nowrap; }
+.amp { font-family: 'Pixelify Sans', var(--font); font-weight: 600; }
 .topbar .back:hover { color: #fff3b0; }
 .topbar .tools { margin-left: auto; gap: 8px; }
 
@@ -83,7 +85,7 @@ canvas.sprite { image-rendering: pixelated; display: block; }
 .home-main { max-width: 900px; margin: 0 auto; padding: 8px 16px 32px; }
 .hero { text-align: center; margin: 12px 0 26px; }
 .lineup { display: flex; justify-content: center; gap: 6px; margin-bottom: 8px; }
-.title { font-family: var(--title); font-size: 64px; letter-spacing: 6px; margin: 0; color: var(--bone); text-shadow: 4px 4px 0 var(--ink), 8px 8px 0 var(--plum); }
+.title { font-family: var(--title); font-size: 56px; letter-spacing: 6px; margin: 0; color: var(--bone); text-shadow: 4px 4px 0 var(--ink), 8px 8px 0 var(--plum); }
 @media (max-width: 520px) { .title { font-size: 38px; letter-spacing: 3px; } .lineup canvas:nth-child(n+5) { display: none; } }
 .tagline { color: var(--muted); margin: 10px 0 0; }
 .tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 22px; }
@@ -98,7 +100,7 @@ canvas.sprite { image-rendering: pixelated; display: block; }
 .tile span { color: var(--muted); font-size: 15px; line-height: 1.35; }
 .tile:hover:not(.soon) { box-shadow: 0 0 0 3px var(--ink), 0 0 0 6px var(--gold), 0 0 0 9px var(--ink); }
 .tile.soon { opacity: 0.6; }
-.tile .tag { position: absolute; top: 8px; right: 8px; background: var(--plum); }
+.tile .tag { position: absolute; bottom: 8px; right: 8px; background: var(--plum); }
 .credits { text-align: center; color: var(--muted); font-size: 13px; margin-top: 28px; }
 
 /* ---------- bot picker ---------- */

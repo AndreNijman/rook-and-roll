@@ -6,12 +6,12 @@ export type Sound = 'move' | 'capture' | 'check' | 'castle' | 'win' | 'lose' | '
 
 let ctx: AudioContext | null = null;
 let muted = false;
-try { muted = localStorage.getItem('pawnstorm:muted') === '1'; } catch { /* storage blocked */ }
+try { muted = localStorage.getItem('rookroll:muted') === '1'; } catch { /* storage blocked */ }
 
 export const isMuted = () => muted;
 export function setMuted(m: boolean): void {
   muted = m;
-  try { localStorage.setItem('pawnstorm:muted', m ? '1' : '0'); } catch { /* storage blocked */ }
+  try { localStorage.setItem('rookroll:muted', m ? '1' : '0'); } catch { /* storage blocked */ }
 }
 
 function audio(): AudioContext | null {

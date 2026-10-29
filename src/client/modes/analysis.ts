@@ -15,7 +15,7 @@ import { h, toast } from '../ui/dom';
 import { currentTheme, moveList, topbar } from '../ui/parts';
 import type { Screen } from '../main';
 
-const STORE = 'pawnstorm:analysis';
+const STORE = 'rookroll:analysis';
 const BEST_ARROW = '#8ad05a';
 
 const VERDICT: Record<MoveClass, string> = {
@@ -147,7 +147,7 @@ export function analysisScreen(autoReview: boolean): Screen {
   }
 
   function download(): void {
-    const a = h('a', { href: URL.createObjectURL(new Blob([pgn()], { type: 'application/x-chess-pgn' })), download: 'pawnstorm.pgn' });
+    const a = h('a', { href: URL.createObjectURL(new Blob([pgn()], { type: 'application/x-chess-pgn' })), download: 'rook-and-roll.pgn' });
     a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 1000);
   }
@@ -336,7 +336,7 @@ export function analysisScreen(autoReview: boolean): Screen {
   window.addEventListener('keydown', keys);
 
   let initial = '';
-  try { initial = (autoReview ? sessionStorage.getItem('pawnstorm:review') : null) ?? sessionStorage.getItem(STORE) ?? ''; } catch { /* storage blocked */ }
+  try { initial = (autoReview ? sessionStorage.getItem('rookroll:review') : null) ?? sessionStorage.getItem(STORE) ?? ''; } catch { /* storage blocked */ }
   load(initial);
   if (autoReview && moves.length) {
     // Review from the start, from the player's side of the board.
