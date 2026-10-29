@@ -365,7 +365,9 @@ export function onlineGame(id: string): Screen {
     location.hash = '#review';
   }
 
-  const shareUrl = `${location.origin}${location.pathname}#online/${id}`;
+  // A query, not a hash: the guard wraps a shared link in the hub's frame and
+  // passes the query on to the game, but a fragment never reaches it.
+  const shareUrl = `${location.origin}${location.pathname}?game=${id}`;
   const linkBox = h('input', { readOnly: true, value: shareUrl, onfocus: (e: Event) => (e.target as HTMLInputElement).select() }) as HTMLInputElement;
   invite.append(h('h3', {}, 'Invite a friend'), h('p.hint', {}, 'Send them this link. The game starts when they open it.'),
     h('div.row', {}, linkBox, h('button', { onclick: () => { void navigator.clipboard?.writeText(shareUrl).then(() => toast('Link copied.'), () => linkBox.select()); } }, 'Copy')));

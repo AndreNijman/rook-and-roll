@@ -78,6 +78,15 @@ function homeScreen(): Screen {
   return { el };
 }
 
+// A friend link (?game=<id>, see online.ts) opens that game.
+const shared = new URLSearchParams(location.search).get('game');
+if (shared && /^[a-z0-9]{8}$/.test(shared)) {
+  const url = new URL(location.href);
+  url.searchParams.delete('game');
+  url.hash = `online/${shared}`;
+  history.replaceState(null, '', url);
+}
+
 window.addEventListener('hashchange', route);
 route();
 void connect().then((replaced) => {

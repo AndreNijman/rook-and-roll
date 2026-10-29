@@ -355,7 +355,8 @@ export class Game extends DurableObject<Env> {
       const r = m.s.result!;
       const score = r.winner === 'w' ? 1 : r.winner === 'b' ? 0 : 0.5;
       const change = await lobby(this.env).rate(m.s.id, categoryOf(m.s.tc), m.s.seats.w!, m.s.seats.b!, score);
-      if (change) r.change = change;
+      // Null means the lobby rated this game already (a retry after a crash): don't ask again.
+      r.change = change ?? {};
     }
     await this.save();
     this.broadcast();
