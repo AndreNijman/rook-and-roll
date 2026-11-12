@@ -238,6 +238,18 @@ describe('spell chess: the spells', () => {
     expect(has(s, 'a7a6')).toBe(true); // one move only
   });
 
+  it('Royal Alarm lets a piece that is under attack get away', () => {
+    // White attacks the b4 knight with a pawn and sounds the alarm: the knight may still run.
+    let s = fromBoard(board({ a2: 'P', h2: 'P', b4: 'n', g8: 'n', h7: 'p' }), { hands: { w: ['alarm'] } });
+    s = applyCast(s, cast('alarm'));
+    s = mv(s, 'a2a3');
+    const from = new Set(legalMoves(s).map((m) => sqName(m.from)));
+    expect([...from].sort()).toEqual(['b4', 'e8']);
+    expect(has(s, 'g8f6')).toBe(false);
+    expect(has(s, 'h7h6')).toBe(false);
+    expect(has(s, 'b4d5')).toBe(true);
+  });
+
   it('Royal Alarm needs a king move now, and fizzles if there is none later', () => {
     const boxed = fromBoard(['...qkb..', '...ppp..', '........', '........', '........', '........', 'P.......', '....K...'], { hands: { w: ['alarm'] } });
     expect(can(boxed, 'alarm')).toBe(false);
@@ -430,6 +442,21 @@ describe('spell chess: the spells', () => {
     const one = fromBoard(board({ a2: 'P' }), { hands: { w: ['trap'] } });
     one.fx.traps.push({ by: 'w', sq: 30, until: 99 });
     expect(legalCasts(one)).toHaveLength(0);
+  });
+
+  it('Rune Trap covers two adjacent squares and is spent by the first piece caught', () => {
+    let s = fromBoard(board({ a2: 'P', b8: 'n', g8: 'n', h7: 'p' }), { hands: { w: ['trap'] } });
+    expect(can(s, 'trap', 'c6', 'd5')).toBe(false); // not adjacent
+    expect(can(s, 'trap', 'h5', 'a6')).toBe(false); // wraps the edge
+    expect(can(s, 'trap', 'c6', 'b8')).toBe(false);
+    expect(legalCasts(s).every((c) => c.at.length === 2)).toBe(true);
+    s = applyCast(s, cast('trap', 'c6', 'd6'));
+    expect(s.fx.traps).toEqual([{ by: 'w', sq: sqIdx('c6'), sq2: sqIdx('d6'), until: 7 }]);
+    s = mv(s, 'a2a3');
+    s = mv(s, 'b8c6');
+    expect(piece(s, 'c6')).toBeNull();
+    expect(s.fx.traps).toHaveLength(0); // both squares are safe again
+    expect(JSON.parse(JSON.stringify(s))).toEqual(s);
   });
 
   it('a king walks over a trap unharmed', () => {

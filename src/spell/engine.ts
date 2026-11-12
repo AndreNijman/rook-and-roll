@@ -23,7 +23,8 @@ export interface Fx {
   frost: { by: Color; ids: number[]; until: number }[];
   walls: { by: Color; a: number; b: number; until: number }[];
   aegis: { by: Color; id: number; until: number }[];
-  traps: { by: Color; sq: number; until: number }[];
+  /** A trap covers one square, or two adjacent ones (`sq2`). */
+  traps: { by: Color; sq: number; sq2?: number; until: number }[];
   phantoms: { by: Color; id: number; placed: number; until: number }[];
   alarm: { by: Color; on: Color; until: number; forced: boolean }[];
   silence: { on: Color; until: number }[];
@@ -186,7 +187,7 @@ function repKey(s: State): string {
     s.fx.frost.map((f) => `f${f.by}${f.ids.map((id) => s.board.findIndex((p) => p?.id === id)).join(',')}:${rel(f.until)}`),
     s.fx.walls.map((w) => `w${w.a}.${w.b}:${rel(w.until)}`),
     s.fx.aegis.map((a) => `a${s.board.findIndex((p) => p?.id === a.id)}:${rel(a.until)}`),
-    s.fx.traps.map((t) => `t${t.by}${t.sq}:${rel(t.until)}`),
+    s.fx.traps.map((t) => `t${t.by}${t.sq}.${t.sq2 ?? ''}:${rel(t.until)}`),
     s.fx.phantoms.map((p) => `p${p.by}${rel(p.until)}`),
     s.fx.alarm.map((a) => `r${a.on}:${rel(a.until)}`),
     s.fx.silence.map((x) => `s${x.on}:${rel(x.until)}`),
@@ -241,7 +242,7 @@ export function inCheck(s: State, c: Color): boolean {
 
 function trapAt(s: State, sq: number, mover: Piece) {
   if (mover.t === 'k' || aegisOn(s, mover.id)) return undefined;
-  return s.fx.traps.find((t) => t.sq === sq && t.by !== mover.c);
+  return s.fx.traps.find((t) => (t.sq === sq || t.sq2 === sq) && t.by !== mover.c);
 }
 
 function boardAfter(s: State, m: Move): Cell[] {
@@ -357,7 +358,11 @@ const alarmForced = (s: State, c: Color) => s.fx.alarm.some((a) => a.on === c &&
 export function legalMoves(s: State): Move[] {
   if (s.result || s.pending || s.flags.moved) return [];
   let moves = pseudo(s, s.turn).filter((m) => legalFor(s, m));
-  if (alarmForced(s, s.turn)) moves = moves.filter((m) => s.board[m.from]!.t === 'k' && m.kind !== 'castle');
+  // Royal Alarm: the king must move, or a piece that is under attack may get away.
+  if (alarmForced(s, s.turn)) {
+    const foe = other(s.turn);
+    moves = moves.filter((m) => m.kind !== 'castle' && (s.board[m.from]!.t === 'k' || attacked(s, s.board, m.from, foe)));
+  }
   return moves;
 }
 
@@ -534,7 +539,7 @@ function candidates(s: State, spell: SpellId, c: Color): number[][] {
     }
     case 'blink': return mine((p) => p.t === 'n' || p.t === 'b' || p.t === 'r').flatMap((from) =>
       squares((to) => empty(s, to) && Math.max(Math.abs(fileOf(to) - fileOf(from)), Math.abs(rankOf(to) - rankOf(from))) <= 2).map((to) => [from, to]));
-    case 'wall': return squares((i) => empty(s, i)).flatMap((a) => {
+    case 'wall': case 'trap': return squares((i) => empty(s, i)).flatMap((a) => {
       const o: number[][] = [];
       if (fileOf(a) < 7 && empty(s, a + 1)) o.push([a, a + 1]);
       if (rankOf(a) < 7 && empty(s, a + 8)) o.push([a, a + 8]);
@@ -544,7 +549,6 @@ function candidates(s: State, spell: SpellId, c: Color): number[][] {
     case 'surge': return one(mine((p) => p.t === 'p'));
     case 'shapeshift': return one(mine((p) => p.t === 'n' || p.t === 'b'));
     case 'revive': return one(squares((i) => empty(s, i) && rankOf(i) === (c === 'w' ? 1 : 6)));
-    case 'trap': return one(squares((i) => empty(s, i)));
     case 'smite': case 'charm': return one(squares((i) => s.board[i]?.c === e && s.board[i]!.t === 'p'));
     case 'gust': return squares((i) => s.board[i]?.c === e && s.board[i]!.t !== 'k').flatMap((from) =>
       ALL8.filter(([df, dr]) => inB(fileOf(from) + df, rankOf(from) + dr)).map(([df, dr]) => [from, from + df + dr * 8]));
@@ -673,9 +677,14 @@ function resolve(s: State, spell: SpellId, at: number[], c: Color): boolean {
       return true;
     }
     case 'trap': {
-      const sq = at[0];
-      if (at.length !== 1 || sq === undefined || !empty(s, sq) || s.fx.traps.some((t) => t.by === c)) return false;
-      s.fx.traps.push({ by: c, sq, until: P + 7 });
+      // Two adjacent squares. One square is still accepted, for games recorded before the trap grew.
+      const [a, b] = at;
+      if (at.length < 1 || a === undefined || !empty(s, a) || s.fx.traps.some((t) => t.by === c)) return false;
+      if (b === undefined) { s.fx.traps.push({ by: c, sq: a, until: P + 7 }); return true; }
+      if (!empty(s, b)) return false;
+      const lo = Math.min(a, b), hi = Math.max(a, b);
+      if (!(hi - lo === 8 || (hi - lo === 1 && rankOf(lo) === rankOf(hi)))) return false;
+      s.fx.traps.push({ by: c, sq: lo, sq2: hi, until: P + 7 });
       return true;
     }
     case 'smite': {
@@ -775,7 +784,7 @@ export function phantomTurnsLeft(s: State, id: number): number {
 }
 
 export function trapTurnsLeft(s: State, sq: number): number {
-  const t = s.fx.traps.find((x) => x.sq === sq);
+  const t = s.fx.traps.find((x) => x.sq === sq || x.sq2 === sq);
   return t ? Math.min(3, Math.ceil((t.until - s.ply) / 2)) : 0;
 }
 
@@ -799,7 +808,7 @@ export function castText(cast: Cast, names: Record<SpellId, string>): string {
   const sq = cast.at.map(sqName);
   const spell = cast.as ?? cast.spell;
   const arrow = ['blink', 'gust', 'transpose'].includes(spell);
-  const detail = sq.length ? (arrow ? `${sq[0]} → ${sq[1]}` : spell === 'wall' ? `${sq[0]}–${sq[1]}` : spell === 'frost' ? `${sq[0]}–${sqName(cast.at[0] + 9)}` : sq[0]) : '';
+  const detail = sq.length ? (arrow ? `${sq[0]} → ${sq[1]}` : (spell === 'wall' || spell === 'trap') && sq.length > 1 ? `${sq[0]}–${sq[1]}` : spell === 'frost' ? `${sq[0]}–${sqName(cast.at[0] + 9)}` : sq[0]) : '';
   const via = cast.as ? ` (${names[cast.as]})` : '';
   return `${name}${via}${detail ? ': ' + detail : ''}`;
 }

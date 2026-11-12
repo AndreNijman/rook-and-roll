@@ -107,6 +107,21 @@ const attackers = (s: State, sq: number, by: Color): boolean => {
   return legalMoves(probe).some((m) => m.to === sq && m.kind === 'cap');
 };
 
+const reachCache = new WeakMap<State, Map<number, number>>();
+/** How many moves of `foe`'s pieces (not the king) end on each square, worked out once per position. */
+function foeReach(s: State, foe: Color): Map<number, number> {
+  let reach = reachCache.get(s);
+  if (!reach) {
+    reach = new Map();
+    const probe = clone(s);
+    probe.turn = foe;
+    probe.flags = { cast: false, moved: false, leap: false, blinked: null };
+    for (const m of legalMoves(probe)) if (probe.board[m.from]!.t !== 'k') reach.set(m.to, (reach.get(m.to) ?? 0) + 1);
+    reachCache.set(s, reach);
+  }
+  return reach;
+}
+
 /** What static evaluation cannot see about a cast, in centipawns. */
 function hunch(s: State, after: State, cast: Cast, me: Color): number {
   const spell = cast.as ?? cast.spell;
@@ -129,7 +144,11 @@ function hunch(s: State, after: State, cast: Cast, me: Color): number {
     case 'silence': return (s.fx.walls.concat(s.fx.traps as never[], s.fx.aegis as never[], s.fx.frost as never[]) as { by: Color }[]).filter((x) => x.by === foe).length * 40 + s.hands[foe].length * 6 - 10;
     case 'phantom': return 45;
     case 'leap': return 30;
-    case 'trap': return 12;
+    case 'trap': {
+      // Worth more the more enemy moves it takes away.
+      const reach = foeReach(s, foe);
+      return 6 + 7 * cast.at.reduce((n, sq) => n + (reach.get(sq) ?? 0), 0);
+    }
     case 'alarm': return 8;
     case 'wall': return 4;
     default: return 0;

@@ -33,6 +33,7 @@ npm run sheet -- sheet.png   # render every piece on every board theme
 npm run relay:dev                         # the online relay on :8797
 VITE_RELAY=ws://localhost:8797/ws npm run dev   # client against it
 npm run test:online                       # drive the relay with fake players
+npx tsx tools/spell-balance.ts            # bot-vs-bot Spell Chess games, per-spell numbers
 ```
 
 ## Online relay

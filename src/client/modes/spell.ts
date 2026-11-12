@@ -364,7 +364,7 @@ function gameScreen(saved: Saved, onlineId?: string): Screen {
     if (!casts.length) return;
     // Either end of a swap or a wall may be picked first.
     const eff = effective(card);
-    if (eff === 'transpose' || eff === 'wall') casts = casts.concat(casts.map((c) => ({ ...c, at: [c.at[1], c.at[0]] })));
+    if (eff === 'transpose' || eff === 'wall' || eff === 'trap') casts = casts.concat(casts.map((c) => ({ ...c, at: [c.at[1], c.at[0]] })));
     aim = { kind: 'spell', card, casts, picks: [] };
     render(false);
   }
@@ -518,7 +518,7 @@ function gameScreen(saved: Saved, onlineId?: string): Screen {
     for (const f of s.fx.frost) for (const id of f.ids) on(id, 'frost');
     for (const w of s.fx.walls) for (const i of [w.a, w.b]) marks.push({ sq: sqName(i) as Square, kind: 'wall' });
     for (const a of s.fx.aegis) on(a.id, 'aegis');
-    for (const t of s.fx.traps) marks.push({ sq: sqName(t.sq) as Square, kind: 'trap', n: trapTurnsLeft(s, t.sq) });
+    for (const t of s.fx.traps) for (const i of t.sq2 === undefined ? [t.sq] : [t.sq, t.sq2]) marks.push({ sq: sqName(i) as Square, kind: 'trap', n: trapTurnsLeft(s, i) });
     for (const a of s.fx.alarm) { const k = findKing(s.board, a.on); if (k >= 0) marks.push({ sq: sqName(k) as Square, kind: 'alarm' }); }
 
     const dests = new Map<Square, Square[]>();

@@ -30,7 +30,7 @@ export const SPELLS: Record<SpellId, SpellInfo> = {
   },
   alarm: {
     name: 'Royal Alarm',
-    text: 'Your opponent\'s next move must be a king move (no castling). Only castable if their king has a legal move now. If it has none when their turn starts, the alarm does nothing.',
+    text: 'Your opponent\'s next move must be a king move (no castling), or a move by one of their pieces that is under attack. Only castable if their king has a legal move now. If it has none when their turn starts, the alarm does nothing.',
     aim: [],
     color: '#d8484a', light: '#f0d060',
     icon: ['...o....', '..###...', '.#####..', '.#####..', '.#####..', '#######.', '...o....', '........'],
@@ -100,8 +100,8 @@ export const SPELLS: Record<SpellId, SpellInfo> = {
   },
   trap: {
     name: 'Rune Trap',
-    text: 'Mark an empty square. The first enemy piece (not the king) that ends a move on it, or is pushed onto it, is destroyed. Both players see it; your own pieces are safe. It lasts until the end of your third turn after casting. One at a time.',
-    aim: ['Pick an empty square for the rune.'],
+    text: 'Mark two empty squares side by side or one above the other. The first enemy piece (not the king) that ends a move on either, or is pushed onto one, is destroyed and the trap is spent. Both players see it; your own pieces are safe. It lasts until the end of your third turn after casting. One at a time.',
+    aim: ['Pick the first square for the rune.', 'Pick the square next to it.'],
     color: '#7a6290', light: '#f0d060',
     icon: ['...#....', '..#o#...', '.#.o.#..', '#ooooo#.', '.#.o.#..', '..#o#...', '...#....', '........'],
   },
