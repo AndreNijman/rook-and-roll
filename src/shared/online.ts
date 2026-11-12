@@ -3,7 +3,12 @@
 // authoritative; it sends the whole game after every change, since a chess
 // game is a few hundred bytes.
 
+import type { Act } from '../spell/game';
+
 export type Side = 'w' | 'b';
+
+/** Standard chess, or Spell Chess (src/spell). Spell games are always casual. */
+export type Variant = 'standard' | 'spell';
 
 /** Minutes + increment seconds, as on every chess site. */
 export const TIME_CONTROLS = ['1+0', '2+1', '3+0', '3+2', '5+0', '5+3', '10+0', '10+5', '15+10', '30+0'] as const;
@@ -57,6 +62,12 @@ export interface GameView {
   rated: boolean;
   status: Status;
   players: Record<Side, PlayerInfo | null>;
+  /** Absent for standard chess. */
+  variant?: 'spell';
+  /** Spell Chess: the shuffle seed and every action so far; replaying them gives the position. */
+  spell?: { seed: number; acts: Act[] };
+  /** Spell Chess: whose clock is running (a turn can take several actions). */
+  turn?: Side;
   /** Moves in UCI. */
   moves: string[];
   /** Time left for each side when the current turn began, in ms. */
@@ -79,6 +90,8 @@ export interface GameView {
 
 export type GameClientMsg =
   | { t: 'move'; uci: string; ply: number }
+  /** Spell Chess: `n` is how many actions the sender has seen, so a resend is ignored. */
+  | { t: 'act'; act: Act; n: number }
   | { t: 'resign' }
   | { t: 'abort' }
   | { t: 'draw' }
@@ -91,14 +104,14 @@ export type GameServerMsg =
   | { t: 'error'; message: string };
 
 export type LobbyClientMsg =
-  | { t: 'seek'; tc: TimeControl; rated: boolean }
+  | { t: 'seek'; tc: TimeControl; rated: boolean; variant?: Variant }
   | { t: 'cancel' }
-  | { t: 'friend'; tc: TimeControl; side: Side | 'random' };
+  | { t: 'friend'; tc: TimeControl; side: Side | 'random'; variant?: Variant };
 
 export type LobbyServerMsg =
-  | { t: 'hello'; name: string; account: boolean; ratings: Partial<Record<Category, Rated & { games: number }>> }
-  | { t: 'counts'; seeking: Partial<Record<TimeControl, number>>; online: number }
-  | { t: 'seeking'; tc: TimeControl; rated: boolean }
+  | { t: 'hello'; name: string; account: boolean; ratings: Partial<Record<Category, Rated & { games: number }>>; /** Variants this relay can host besides standard chess. */ variants?: Variant[] }
+  | { t: 'counts'; seeking: Partial<Record<TimeControl, number>>; /** Seekers per time control for Spell Chess. */ spell?: Partial<Record<TimeControl, number>>; online: number }
+  | { t: 'seeking'; tc: TimeControl; rated: boolean; variant?: Variant }
   | { t: 'matched'; id: string }
   | { t: 'created'; id: string }
   | { t: 'error'; message: string };

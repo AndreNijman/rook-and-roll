@@ -79,7 +79,7 @@ function homeScreen(): Screen {
         tile('online', 'Play online', 'Rated games against people, or a link for a friend.'),
         tile('puzzles', 'Puzzles', 'Rated tactics that keep pace with you, and Puzzle Rush against the clock.'),
         tile('analysis', 'Analysis', 'Explore positions with the engine, import a game, review it.'),
-        tile('spell', 'Spell Chess', 'Chess with a hand of spells. Capture to draw a card, cast one a turn.')),
+        tile('spell', 'Spell Chess', 'Chess with a hand of spells, against a bot, a friend or online. Capture to draw a card, cast one a turn.')),
       h('p.credits', {}, 'Engine: ', h('a', { href: 'https://stockfishchess.org', target: '_blank', rel: 'noopener' }, 'Stockfish'), ' (GPLv3, ', h('a', { href: 'engine/COPYING.txt', target: '_blank' }, 'licence'), ').')));
   return { el };
 }

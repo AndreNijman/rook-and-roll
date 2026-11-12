@@ -306,3 +306,5 @@ div.god h3 { margin: 0 0 8px; color: #f0a0e0; }
 @keyframes ascend { 0%, 30%, 60% { filter: brightness(2.2) saturate(0.4); } 15%, 45%, 100% { filter: none; } }
 @media (prefers-reduced-motion: reduce) { .board-host.shake, .board-host.disco canvas.board, .spell.ascend { animation: none; } }
 @media (max-width: 520px) { .spell-card .name { font-size: 9px; } .spell-card { padding: 4px; gap: 4px; } .hand-info { min-width: 40px; font-size: 11px; } }
+
+.chips.variants { margin: 10px 0 2px; }

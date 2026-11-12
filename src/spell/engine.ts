@@ -717,6 +717,8 @@ function resolve(s: State, spell: SpellId, at: number[], c: Color): boolean {
 export function tryCast(s0: State, cast: Cast): State | null {
   const c = s0.turn;
   if (s0.result || s0.pending || s0.flags.cast || silenced(s0, c) || !s0.hands[c].includes(cast.spell)) return null;
+  // Casts can come off the network: targets must be squares, and no more than two.
+  if (!Array.isArray(cast.at) || cast.at.length > 2 || cast.at.some((i) => !Number.isInteger(i) || i < 0 || i > 63)) return null;
   const pre = !s0.flags.moved;
   let effective: SpellId = cast.spell;
   if (cast.spell === 'echo') {
@@ -725,6 +727,7 @@ export function tryCast(s0: State, cast: Cast): State | null {
     effective = copy;
   } else if (cast.as) return null;
   if (effective === 'leap' && !pre) return null;
+  if ((effective === 'alarm' || effective === 'timeslip' || effective === 'leap' || effective === 'silence') && cast.at.length) return null;
   const s = clone(s0);
   if (!resolve(s, effective, cast.at, c)) return null;
   s.hands[c].splice(s.hands[c].indexOf(cast.spell), 1);

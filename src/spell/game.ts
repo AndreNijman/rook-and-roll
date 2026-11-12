@@ -10,6 +10,9 @@ import {
 } from './engine';
 import { SPELL_NAMES } from './spells';
 
+const isSpell = (x: unknown): x is SpellId => typeof x === 'string' && x in SPELL_NAMES;
+const isSq = (x: unknown): x is number => Number.isInteger(x) && (x as number) >= 0 && (x as number) <= 63;
+
 export type Act =
   | { k: 'm'; from: number; to: number; promo?: 'q' | 'r' | 'b' | 'n' }
   | { k: 'c'; cast: Cast }
@@ -141,4 +144,29 @@ export function takebackPoint(seed: number, acts: Act[], side: Color | 'both'): 
     if (fresh() && mine() && acts[i].k !== 'g') start = i + 1;
   }
   return found;
+}
+
+/**
+ * A player's action as received from the network: a move, cast, discard or
+ * end of turn, rebuilt field by field. God powers and anything malformed
+ * give null.
+ */
+export function cleanAct(x: unknown): Act | null {
+  if (!x || typeof x !== 'object') return null;
+  const a = x as Record<string, unknown>;
+  if (a.k === 'e') return { k: 'e' };
+  if (a.k === 'd') return isSpell(a.spell) ? { k: 'd', spell: a.spell } : null;
+  if (a.k === 'm') {
+    if (!isSq(a.from) || !isSq(a.to)) return null;
+    const promo = a.promo;
+    if (promo !== undefined && promo !== 'q' && promo !== 'r' && promo !== 'b' && promo !== 'n') return null;
+    return promo ? { k: 'm', from: a.from, to: a.to, promo } : { k: 'm', from: a.from, to: a.to };
+  }
+  if (a.k === 'c') {
+    const c = a.cast as Record<string, unknown> | null;
+    if (!c || typeof c !== 'object' || !isSpell(c.spell) || !Array.isArray(c.at) || c.at.length > 2 || !c.at.every(isSq)) return null;
+    if (c.as !== undefined && !isSpell(c.as)) return null;
+    return { k: 'c', cast: c.as ? { spell: c.spell, at: [...c.at], as: c.as } : { spell: c.spell, at: [...c.at] } };
+  }
+  return null;
 }

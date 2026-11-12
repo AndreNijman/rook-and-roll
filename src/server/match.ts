@@ -7,9 +7,10 @@
 // Aborted games are never rated.
 
 import { Chess } from 'chess.js';
+import { act as spellAct, cleanAct, replay, type Act, type Game as SpellGame } from '../spell/game';
 import {
   CLAIM_MS, FIRST_MOVE_MS, canMate, clockOf,
-  type GameView, type PlayerInfo, type Result, type Side, type Status, type TimeControl,
+  type GameView, type PlayerInfo, type Result, type Side, type Status, type TimeControl, type Variant,
 } from '../shared/online';
 
 export interface Seat { pid: string; info: PlayerInfo }
@@ -21,6 +22,10 @@ export interface MatchState {
   status: Status;
   seats: Record<Side, Seat | null>;
   moves: string[];
+  /** Spell Chess only: the shuffle seed and the actions so far (moves stays empty). */
+  variant?: 'spell';
+  seed?: number;
+  acts?: Act[];
   clocks: Record<Side, number>;
   turnStart: number;
   drawOffer: Side | null;
@@ -41,24 +46,32 @@ const UCI = /^[a-h][1-8][a-h][1-8][qrbn]?$/;
 
 export class Match {
   readonly chess: Chess;
+  /** The Spell Chess game, rebuilt from the seed and actions; null for standard chess. */
+  spell: SpellGame | null = null;
 
   constructor(readonly s: MatchState) {
     this.chess = new Chess();
-    for (const m of s.moves) this.chess.move({ from: m.slice(0, 2), to: m.slice(2, 4), promotion: m[4] });
+    if (s.variant === 'spell') this.spell = replay(s.seed ?? 0, s.acts ?? []);
+    else for (const m of s.moves) this.chess.move({ from: m.slice(0, 2), to: m.slice(2, 4), promotion: m[4] });
   }
 
-  static create(o: { id: string; tc: TimeControl; rated: boolean; seats: Record<Side, Seat | null> }, now: number): Match {
+  /** `seed` shuffles the decks of a Spell Chess game; the caller supplies the randomness. */
+  static create(o: { id: string; tc: TimeControl; rated: boolean; seats: Record<Side, Seat | null>; variant?: Variant; seed?: number }, now: number): Match {
     const { base } = clockOf(o.tc);
     const full = Boolean(o.seats.w && o.seats.b);
+    const spell = o.variant === 'spell';
     return new Match({
-      id: o.id, tc: o.tc, rated: o.rated && full, status: full ? 'playing' : 'waiting', seats: o.seats,
+      id: o.id, tc: o.tc, rated: o.rated && full && !spell, status: full ? 'playing' : 'waiting', seats: o.seats,
       moves: [], clocks: { w: base, b: base }, turnStart: now, drawOffer: null, rematchOffer: null,
       gone: {}, created: now,
+      ...(spell ? { variant: 'spell' as const, seed: (o.seed ?? 0) >>> 0, acts: [] } : {}),
     });
   }
 
-  get running(): boolean { return this.s.moves.length >= 2; }
-  get turn(): Side { return this.chess.turn(); }
+  /** Both sides have finished a first turn. */
+  get running(): boolean { return this.spell ? this.spell.state.ply >= 2 : this.s.moves.length >= 2; }
+  /** Whose clock it is. In Spell Chess a discard is owed by the player who drew. */
+  get turn(): Side { return this.spell ? this.spell.state.pending?.color ?? this.spell.state.turn : this.chess.turn(); }
 
   sideOf(pid: string): Side | null {
     if (this.s.seats.w?.pid === pid) return 'w';
@@ -93,7 +106,7 @@ export class Match {
     if (!side) return 'You are watching this game.';
     if (ply !== this.s.moves.length) return null; // a resend of a move already played
     if (this.turn !== side) return 'Not your move.';
-    if (!UCI.test(uci)) return 'Illegal move.';
+    if (this.spell || !UCI.test(uci)) return 'Illegal move.';
     if (this.tick(now)) return null;
     const running = this.running;
     const left = this.left(side, now);
@@ -113,6 +126,38 @@ export class Match {
     return null;
   }
 
+  /**
+   * One Spell Chess action (move, cast, discard, end turn). `n` is how many
+   * actions the sender had seen. An error message, or null when it was played
+   * (or the player flagged first). The clock keeps running through a turn's
+   * actions; the increment is added when the turn passes.
+   */
+  act(pid: string, raw: unknown, n: number, now: number): string | null {
+    const side = this.sideOf(pid);
+    if (this.s.status !== 'playing') return 'The game is not on.';
+    if (!side) return 'You are watching this game.';
+    if (!this.spell || !this.s.acts) return 'This is not a Spell Chess game.';
+    if (n !== this.s.acts.length) return null; // a resend of an action already played
+    if (this.turn !== side) return 'Not your turn.';
+    const a = cleanAct(raw);
+    if (!a) return 'Illegal action.';
+    if (this.tick(now)) return null;
+    const running = this.running;
+    const left = this.left(side, now);
+    const next = spellAct(this.spell, a);
+    if (!next) return 'Illegal action.';
+    this.spell = next;
+    this.s.acts.push(a);
+    const result = next.state.result;
+    if (this.turn !== side || result) {
+      if (running) this.s.clocks[side] = left + clockOf(this.s.tc).inc;
+      this.s.turnStart = now;
+      if (this.s.drawOffer === other(side)) this.s.drawOffer = null;
+    }
+    if (result) this.end({ winner: result.winner, reason: result.reason }, now);
+    return null;
+  }
+
   /** Apply time-outs due by `now`; true if the game ended. */
   tick(now: number): boolean {
     if (this.s.status !== 'playing') return false;
@@ -124,7 +169,8 @@ export class Match {
     if (this.left(side, now) > 0) return false;
     this.s.clocks[side] = 0;
     const winner = other(side);
-    this.end(canMate(this.chess.fen(), winner)
+    // In Spell Chess a bare king can still win (Revive, Phantom Knight), so time is time.
+    this.end(this.spell || canMate(this.chess.fen(), winner)
       ? { winner, reason: 'timeout' }
       : { winner: null, reason: 'timeout vs insufficient material' }, now);
     return true;
@@ -205,6 +251,7 @@ export class Match {
     return {
       id: s.id, tc: s.tc, rated: s.rated, status: s.status,
       players: { w: s.seats.w?.info ?? null, b: s.seats.b?.info ?? null },
+      ...(this.spell ? { variant: 'spell' as const, spell: { seed: s.seed ?? 0, acts: s.acts ?? [] }, turn: this.turn } : {}),
       moves: s.moves, clocks: s.clocks, turnStart: s.turnStart, now,
       running: this.running && s.status === 'playing',
       firstMoveBy: s.status === 'playing' && !this.running ? s.turnStart + FIRST_MOVE_MS : undefined,

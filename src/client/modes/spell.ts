@@ -9,6 +9,7 @@ import { img, px, toCanvas } from '../art/pixel';
 import { play as sound } from '../audio';
 import { BOTS, type Bot } from '../bots';
 import { BoardView, type BoardState, type Mark, type Pieces } from '../board/view';
+import { Relay, type Link } from '../net';
 import { LEVELS, botAction, type Action } from '../../spell/bot';
 import {
   SPELL_IDS, findKing, inCheck, isSilenced, legalCasts, legalMoves, other, phantomTurnsLeft, rankOf, sqIdx, sqName, trapTurnsLeft,
@@ -16,8 +17,9 @@ import {
 } from '../../spell/engine';
 import { act, replay, sideNow, takebackPoint, type Act, type Game } from '../../spell/game';
 import { SPELLS } from '../../spell/spells';
+import { CLAIM_MS, categoryOf, type GameClientMsg, type GameServerMsg, type GameView } from '../../shared/online';
 import { canvasOf, h, toast } from '../ui/dom';
-import { currentTheme, modal, pieceIcon, playerBar, portrait, topbar, youAvatar } from '../ui/parts';
+import { currentTheme, modal, pieceIcon, playerBar, playerPortrait, portrait, topbar, youAvatar } from '../ui/parts';
 import type { Screen } from '../main';
 
 const SAVE = 'rookroll:spellgame';
@@ -30,12 +32,14 @@ const FOES: { bot: Bot; level: number; title: string; blurb: string }[] = [
   { bot: BOTS[6], level: 2, title: 'Archmage', blurb: 'Reads the board three moves deep. Guard your pieces.' },
 ];
 
-interface Saved { seed: number; acts: Act[]; side: Color; foe: 'bot' | 'local'; level: number; god?: boolean; resigned?: Color }
+interface Saved { seed: number; acts: Act[]; side: Color; foe: 'bot' | 'local' | 'online'; level: number; god?: boolean; resigned?: Color }
+
+const linkText: Record<Link, string> = { connecting: 'Connecting…', open: '', lost: 'Connection lost. Reconnecting…' };
 
 function load(): Saved | null {
   try {
     const g = JSON.parse(localStorage.getItem(SAVE) || 'null') as Saved | null;
-    return g && typeof g.seed === 'number' && Array.isArray(g.acts) ? g : null;
+    return g && typeof g.seed === 'number' && Array.isArray(g.acts) && g.foe !== 'online' ? g : null;
   } catch { return null; }
 }
 
@@ -58,6 +62,11 @@ function spellIcon(id: SpellId, scale: number): HTMLCanvasElement {
 export function spellScreen(): Screen {
   const saved = load();
   return saved ? gameScreen(saved) : lobby();
+}
+
+/** An online Spell Chess game (#online/<id>): the relay holds the seed, the actions and the clocks. */
+export function spellOnlineScreen(id: string): Screen {
+  return gameScreen({ seed: 0, acts: [], side: 'w', foe: 'online', level: 0 }, id);
 }
 
 // ---------- lobby ----------
@@ -92,7 +101,10 @@ function lobby(): Screen {
       grid, detail, sideHead, sides,
       h('details.io.spellbook', {}, h('summary', {}, 'The 18 spells'),
         h('div.spellbook-grid', {}, ...SPELL_IDS.map((id) => h('div.spell-entry', {}, spellIcon(id, 3), h('div', {}, h('b', {}, SPELLS[id].name), h('p', {}, SPELLS[id].text)))))),
-      h('div.row.end', {}, h('span'), h('button.primary.big', {
+      h('div.row.end', {}, h('a.button', {
+        href: '#online',
+        onclick: () => { try { localStorage.setItem('rookroll:online', JSON.stringify({ ...JSON.parse(localStorage.getItem('rookroll:online') || '{}'), variant: 'spell' })); } catch { /* storage blocked */ } },
+      }, 'Play online'), h('button.primary.big', {
         onclick: () => {
           const s: Color = foe === 'local' ? 'w' : side === 'random' ? (Math.random() < 0.5 ? 'w' : 'b') : side;
           store({ seed: (Math.random() * 2 ** 32) >>> 0, acts: [], side: s, foe: foe === 'local' ? 'local' : 'bot', level: foe === 'local' ? 0 : FOES[foe].level });
@@ -109,9 +121,18 @@ type Aim =
   | { kind: 'spell'; card: SpellId; casts: Cast[]; picks: number[] }
   | { kind: 'god'; power: 'flick' | 'anoint' | 'chicken'; targets: number[] };
 
-function gameScreen(saved: Saved): Screen {
-  const { seed, foe } = saved;
+function gameScreen(saved: Saved, onlineId?: string): Screen {
+  const foe = saved.foe;
+  const net = foe === 'online';
+  let seed = saved.seed;
   const side = saved.side;
+  // Online only: the relay's latest view, which side this browser plays, and the clock offset.
+  let view: GameView | null = null;
+  let you: Color | null = null;
+  let skew = 0;
+  let link: Link = net ? 'connecting' : 'open';
+  let sending = false;
+  const relay = net && onlineId ? new Relay<GameServerMsg, GameClientMsg>({ game: onlineId }) : null;
   const rival = FOES.find((f) => f.level === saved.level) ?? FOES[0];
   let acts = saved.acts.slice();
   let game: Game = replay(seed, acts);
@@ -135,17 +156,31 @@ function gameScreen(saved: Saved): Screen {
   const backBtn = h('button', { onclick: takeback }, 'Takeback');
   const resignBtn = h('button.danger', { onclick: resign }, 'Resign');
   const godPanel = h('div.god.hidden');
-  const after = h('div.row.after.hidden', {}, h('button.primary', { onclick: fresh }, 'New game'));
+  const topClock = h('div.clock-chip'), bottomClock = h('div.clock-chip');
+  const head = h('div.online-head');
+  const invite = h('div.invite.hidden');
+  const offer = h('div.offer.hidden');
+  const abortBtn = h('button', { onclick: () => relay?.send({ t: 'abort' }) }, 'Abort');
+  const drawBtn = h('button', { onclick: () => relay?.send({ t: 'draw' }) }, 'Offer draw');
+  const claimBtn = h('button.primary.hidden', { onclick: () => relay?.send({ t: 'claim' }) }, 'Claim the win');
+  const rematchBtn = h('button', { onclick: () => relay?.send({ t: 'rematch' }) }, 'Rematch');
+  const after = net
+    ? h('div.row.after.hidden', {}, rematchBtn, h('a.button', { href: '#online' }, 'New opponent'))
+    : h('div.row.after.hidden', {}, h('button.primary', { onclick: fresh }, 'New game'));
+  if (net) { top.el.append(topClock); bottom.el.append(bottomClock); }
 
   const el = h('div.screen.play.spell', {},
     topbar('Spell Chess', (t) => board.setTheme(t)),
     h('div.game', {},
       h('div.stage', {}, top.el, topHand, host, bottomHand, bottom.el),
       h('aside.side.panel', {},
-        h('div.botline', {}, foe === 'bot' ? portrait(rival.bot, 3) : h('div.two-up', {}, pieceIcon('k', 'w', 2), pieceIcon('k', 'b', 2)),
+        net ? head : h('div.botline', {}, foe === 'bot' ? portrait(rival.bot, 3) : h('div.two-up', {}, pieceIcon('k', 'w', 2), pieceIcon('k', 'b', 2)),
           h('div', {}, h('h2', {}, foe === 'bot' ? rival.bot.name : 'Two players'), h('p.hint', {}, foe === 'bot' ? `${rival.title} · ${rival.blurb}` : 'Both hands are face up.'))),
-        log, status, bar,
-        h('div.row', {}, backBtn, h('button', { onclick: () => board.flip() }, 'Flip'), resignBtn),
+        net ? invite : null,
+        log, status, bar, net ? offer : null,
+        net
+          ? h('div.row', {}, h('button', { onclick: () => { board.flip(); render(false); } }, 'Flip'), abortBtn, drawBtn, resignBtn, claimBtn)
+          : h('div.row', {}, backBtn, h('button', { onclick: () => board.flip() }, 'Flip'), resignBtn),
         godPanel, after)));
 
   board.onMove = (from, to, promotion) => { if (humanTurn()) apply({ k: 'm', from: sqIdx(from), to: sqIdx(to), promo: promotion as 'q' | undefined }); else render(false); };
@@ -153,33 +188,57 @@ function gameScreen(saved: Saved): Screen {
 
   // ----- who is who -----
 
-  const me = (): Color => sideNow(game, side);
+  const me = (): Color => (net ? you ?? 'w' : sideNow(game, side));
   const actor = (): Color => game.state.pending?.color ?? game.state.turn;
-  const over = () => game.state.result ?? (resigned ? { winner: other(resigned), reason: 'resignation' } : null);
-  const humanTurn = () => !over() && !thinking && (foe === 'local' || actor() === me());
-  const label = (c: Color) => (foe === 'local' ? (c === 'w' ? 'White' : 'Black') : c === me() ? 'You' : rival.bot.name);
+  // Online the relay decides when the game is over: it also knows about clocks and resignations.
+  const over = (): { winner: Color | null; reason: string } | null => (net
+    ? view?.result ? { winner: view.result.winner, reason: view.result.reason } : null
+    : game.state.result ?? (resigned ? { winner: other(resigned), reason: 'resignation' } : null));
+  const humanTurn = () => (net
+    ? view?.status === 'playing' && you !== null && actor() === you && !sending && link === 'open' && !game.state.result
+    : !over() && !thinking && (foe === 'local' || actor() === me()));
+  const colour = (c: Color) => (c === 'w' ? 'White' : 'Black');
+  const label = (c: Color) => (net ? (c === you ? 'You' : view?.players[c]?.name ?? colour(c))
+    : foe === 'local' ? colour(c) : c === me() ? 'You' : rival.bot.name);
+  const serverNow = () => Date.now() - skew;
 
   function save(): void {
+    if (net) return;
     store({ seed, acts, side, foe, level: saved.level, god, resigned: resigned ?? undefined });
   }
 
   // ----- actions -----
 
+  /** The sound for an action, and a notice for any card drawn or discarded. */
+  function announce(before: Game, a: Act): void {
+    const count = (s: State) => s.board.reduce((n, p) => n + (p ? 1 : 0), 0);
+    if (a.k === 'c') sound('right');
+    else if (a.k === 'm') sound(inCheck(game.state, game.state.turn) ? 'check' : count(game.state) < count(before.state) ? 'capture' : 'move');
+    const notes = game.log.slice(before.log.length).filter((l) => l.kind === 'note' && /draws|discards/.test(l.text)).map((l) => l.text.replace(/^(White|Black)/, (c) => (foe === 'local' ? c : label(c === 'White' ? 'w' : 'b'))).replace(/^You (draw|discard)s/, 'You $1'));
+    if (notes.length) toast(notes.join(' '), 2600);
+  }
+
   function apply(a: Act, quiet = false): boolean {
     const before = game;
     const next = act(game, a);
     if (!next) { render(false); return false; }
+    if (relay) {
+      // Shown at once; the relay's answer confirms it or puts the board back.
+      if (a.k === 'g') return false;
+      if (!relay.send({ t: 'act', act: a, n: acts.length })) { toast('Not connected: nothing was sent.'); render(false); return false; }
+      acts.push(a);
+      game = next;
+      aim = null;
+      sending = true;
+      announce(before, a);
+      render(a.k !== 'm');
+      return true;
+    }
     acts.push(a);
     game = next;
     aim = null;
     save();
-    if (!quiet) {
-      const count = (s: State) => s.board.reduce((n, p) => n + (p ? 1 : 0), 0);
-      if (a.k === 'c') sound('right');
-      else if (a.k === 'm') sound(inCheck(game.state, game.state.turn) ? 'check' : count(game.state) < count(before.state) ? 'capture' : 'move');
-      const notes = game.log.slice(before.log.length).filter((l) => l.kind === 'note' && /draws|discards/.test(l.text)).map((l) => l.text.replace(/^(White|Black)/, (c) => (foe === 'local' ? c : label(c === 'White' ? 'w' : 'b'))).replace(/^You (draw|discard)s/, 'You $1'));
-      if (notes.length) toast(notes.join(' '), 2600);
-    }
+    if (!quiet) announce(before, a);
     if (timeStop && !game.state.result && a.k !== 'g' && game.state.turn !== before.state.turn) {
       timeStop = false;
       const stopped = act(game, { k: 'g', p: 'pass' });
@@ -220,8 +279,38 @@ function gameScreen(saved: Saved): Screen {
     kick();
   }
 
+  /** Bring this page in line with the relay's action list. */
+  function resync(server: Act[], silent: boolean): void {
+    const same = (a: Act, b: Act) => JSON.stringify(a) === JSON.stringify(b);
+    const extendsMine = !silent && acts.length <= server.length && acts.every((a, i) => same(a, server[i]));
+    let fresh = 0;
+    if (extendsMine) {
+      for (const a of server.slice(acts.length)) {
+        const before = game;
+        const next = act(game, a);
+        if (!next) { fresh = -1; break; }
+        acts.push(a);
+        game = next;
+        announce(before, a);
+        fresh++;
+      }
+    }
+    if (!extendsMine || fresh < 0) {
+      acts = server.slice();
+      game = replay(seed, acts);
+      aim = null;
+    }
+    render(fresh > 0);
+  }
+
   function resign(): void {
     if (over()) return;
+    if (relay) {
+      const m = modal(h('h2', {}, 'Resign?'), h('p', {}, 'Your opponent takes the win.'),
+        h('div.row.end', {}, h('button', { onclick: () => m.close() }, 'Keep playing'),
+          h('button.danger', { onclick: () => { m.close(); relay.send({ t: 'resign' }); } }, 'Resign')));
+      return;
+    }
     const loser = foe === 'local' ? actor() : me();
     const m = modal(h('h2', {}, 'Resign?'), h('p', {}, `${label(other(loser))} will take the win.`),
       h('div.row.end', {}, h('button', { onclick: () => m.close() }, 'Keep playing'),
@@ -237,7 +326,9 @@ function gameScreen(saved: Saved): Screen {
   function describe(): string {
     const o = over();
     if (!o) return '';
+    if (o.reason === 'aborted') return 'Game aborted.';
     if (!o.winner) return `Draw by ${o.reason}.`;
+    if (net) return `${label(o.winner)} won by ${o.reason}${o.winner === you ? '!' : '.'}`;
     if (foe === 'local') return `${label(o.winner)} wins by ${o.reason}.`;
     return o.winner === me() ? `You won by ${o.reason}!` : `${rival.bot.name} won by ${o.reason}.`;
   }
@@ -246,6 +337,14 @@ function gameScreen(saved: Saved): Screen {
     const o = over();
     if (!o || shown) return;
     shown = true;
+    if (net) {
+      const mine = o.reason === 'aborted' || !you ? null : o.winner === null ? 'draw' : o.winner === you ? 'win' : 'lose';
+      if (mine) setTimeout(() => sound(mine), 250);
+      const title = o.reason === 'aborted' ? 'Aborted' : !you ? (o.winner ? `${colour(o.winner)} wins` : 'Draw') : mine === 'win' ? 'You win!' : mine === 'lose' ? 'You lost' : 'Draw';
+      const m = modal(h('h2', {}, title), h('p', {}, describe()),
+        h('div.row.end', {}, h('button', { onclick: () => m.close() }, 'Look at the board'), h('a.button.primary', { href: '#online', onclick: () => m.close() }, 'New opponent')));
+      return;
+    }
     const res = o.winner === null ? 'draw' : foe === 'local' || o.winner === me() ? 'win' : 'lose';
     setTimeout(() => sound(res), 250);
     const m = modal(
@@ -308,7 +407,8 @@ function gameScreen(saved: Saved): Screen {
   // ----- god mode -----
 
   function unlock(): void {
-    if (god) return;
+    // Not online: the relay refuses god powers, and they would not be fair anyway.
+    if (god || net) return;
     god = true;
     save();
     sound('win');
@@ -471,11 +571,14 @@ function gameScreen(saved: Saved): Screen {
     if (aim && !humanTurn()) aim = null;
     board.set(boardOf(s), animate);
 
-    const low: Color = foe === 'local' ? board.side : me();
+    const low: Color = foe === 'bot' ? me() : board.side;
     const high = other(low);
-    const name = (c: Color) => (foe === 'local' ? (c === 'w' ? 'White' : 'Black') : c === me() ? 'You' : rival.bot.name);
-    const avatar = (c: Color) => (foe === 'local' ? pieceIcon('k', c, 3) : c === me() ? youAvatar() : portrait(rival.bot, 2));
-    const turnOf = (c: Color) => (!o && actor() === c ? (thinking ? 'thinking…' : 'to play') : '');
+    const name = (c: Color) => (net ? (view?.players[c] ? view.players[c]!.name + (c === you ? ' (you)' : '') : 'Waiting for a player…') : label(c));
+    const avatar = (c: Color) => (net ? (view?.players[c] ? playerPortrait(view.players[c]!.name, 2) : h('div.you', {}, '?'))
+      : foe === 'local' ? pieceIcon('k', c, 3) : c === me() ? youAvatar() : portrait(rival.bot, 2));
+    const turnOf = (c: Color) => (net
+      ? view?.status !== 'playing' ? '' : view.gone[c] !== undefined ? 'left' : view.drawOffer === c ? 'offers a draw' : actor() === c ? 'to play' : ''
+      : !o && actor() === c ? (thinking ? 'thinking…' : 'to play') : '');
     top.set({ avatar: avatar(high), name: name(high), sub: foe === 'bot' && high !== me() ? rival.title : '', status: turnOf(high) });
     bottom.set({ avatar: avatar(low), name: name(low), sub: foe === 'bot' && low !== me() ? rival.title : '', status: turnOf(low) });
     topHand.replaceChildren(...handOf(high, casts, true));
@@ -489,8 +592,11 @@ function gameScreen(saved: Saved): Screen {
     const who = foe === 'local' ? `${label(actor())}: ` : '';
     const eff = aim?.kind === 'spell' ? effective(aim.card) : null;
     let text: string;
-    if (o) text = describe();
-    else if (!humanTurn()) text = `${rival.bot.name} is thinking…`;
+    if (net && link !== 'open') text = linkText[link];
+    else if (net && !view) text = 'Connecting…';
+    else if (o) text = describe();
+    else if (net && view?.status === 'waiting') text = 'Waiting for your friend to open the link.';
+    else if (!humanTurn()) text = !net ? `${rival.bot.name} is thinking…` : you ? 'Waiting for your opponent…' : `${colour(actor())} to play.`;
     else if (s.pending) text = `${who}Hand is full. Pick one of the four cards to discard.`;
     else if (aim?.kind === 'god') text = aim.power === 'flick' ? 'Pick a piece to flick into the abyss.' : aim.power === 'anoint' ? 'Pick a pawn to crown.' : 'Pick a piece to demote to a pawn.';
     else if (aim && eff) text = `${SPELLS[aim.card].name}${aim.card === 'echo' ? ` (${SPELLS[eff].name})` : ''}: ${SPELLS[eff].aim[aim.picks.length] ?? 'Cast it now?'}`;
@@ -510,10 +616,105 @@ function gameScreen(saved: Saved): Screen {
     ].filter((n): n is HTMLButtonElement | HTMLSpanElement => n !== null));
     bar.classList.toggle('hidden', !bar.childElementCount);
 
-    backBtn.disabled = thinking || takebackPoint(seed, acts, foe === 'local' ? 'both' : side) < 0 || Boolean(game.state.result && !acts.length);
-    resignBtn.disabled = Boolean(o);
     after.classList.toggle('hidden', !o);
+    if (net) renderOnline();
+    else {
+      backBtn.disabled = thinking || takebackPoint(seed, acts, foe === 'local' ? 'both' : side) < 0 || Boolean(game.state.result && !acts.length);
+      resignBtn.disabled = Boolean(o);
+    }
     renderGod();
+  }
+
+  // ----- online: clocks, offers and the buttons around them -----
+
+  function renderOnline(): void {
+    const g = view;
+    if (!g) return;
+    head.replaceChildren(h('h2', {}, `Spell Chess · ${g.tc}`),
+      h('p.hint', {}, you ? `${categoryOf(g.tc)} · casual · you play ${colour(you)}` : `${categoryOf(g.tc)} · casual · watching`));
+    invite.classList.toggle('hidden', g.status !== 'waiting');
+    const opp = you ? other(you) : null;
+    const offered = g.status === 'playing' && opp !== null && g.drawOffer === opp;
+    offer.classList.toggle('hidden', !offered);
+    if (offered) offer.replaceChildren(h('p', {}, 'Your opponent offers a draw.'),
+      h('div.row', {}, h('button.primary', { onclick: () => relay?.send({ t: 'draw' }) }, 'Accept'), h('button', { onclick: () => relay?.send({ t: 'decline' }) }, 'Decline')));
+    const playing = g.status === 'playing' && you !== null;
+    abortBtn.classList.toggle('hidden', !playing || g.running);
+    drawBtn.classList.toggle('hidden', !playing || !g.running);
+    drawBtn.disabled = g.drawOffer === you;
+    drawBtn.textContent = g.drawOffer === you ? 'Draw offered' : 'Offer draw';
+    resignBtn.classList.toggle('hidden', !playing || !g.running);
+    rematchBtn.classList.toggle('hidden', !you || !(g.players.w && g.players.b));
+    rematchBtn.disabled = g.rematchOffer === you;
+    rematchBtn.textContent = g.rematchOffer === you ? 'Rematch asked' : g.rematchOffer ? 'Accept rematch' : 'Rematch';
+    rematchBtn.classList.toggle('primary', Boolean(g.rematchOffer && g.rematchOffer !== you));
+    drawClocks();
+  }
+
+  function timeLeft(c: Color): number {
+    const g = view!;
+    return g.running && g.turn === c ? Math.max(0, g.clocks[c] - (serverNow() - g.turnStart)) : g.clocks[c];
+  }
+
+  function drawClocks(): void {
+    const g = view;
+    if (!g) return;
+    const fmt = (ms: number) => {
+      if (ms < 10_000) return (Math.floor(ms / 100) / 10).toFixed(1);
+      const s = Math.ceil(ms / 1000);
+      return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    };
+    for (const [chip, c] of [[bottomClock, board.side], [topClock, other(board.side)]] as const) {
+      const ms = timeLeft(c);
+      chip.textContent = fmt(ms);
+      chip.classList.toggle('on', g.status === 'playing' && g.running && g.turn === c);
+      chip.classList.toggle('low', g.status === 'playing' && ms < 20_000);
+    }
+    if (link !== 'open' || aim) return;
+    if (g.status === 'playing' && !g.running && g.firstMoveBy && g.turn) {
+      const s = Math.max(0, Math.ceil((g.firstMoveBy - serverNow()) / 1000));
+      status.textContent = `${g.turn === you ? 'You have' : `${colour(g.turn)} has`} ${s} s to make the first move.`;
+    }
+    const since = you ? g.gone[other(you)] : undefined;
+    claimBtn.classList.toggle('hidden', !(g.status === 'playing' && since !== undefined && serverNow() - since >= CLAIM_MS));
+    if (g.status === 'playing' && since !== undefined) {
+      const wait = Math.ceil((since + CLAIM_MS - serverNow()) / 1000);
+      status.textContent = wait > 0 ? `Your opponent left. If they're not back in ${wait} s, you can claim the win.` : 'Your opponent left. Claim the win, or wait for them.';
+    }
+  }
+  const clockTimer = relay ? window.setInterval(drawClocks, 100) : 0;
+
+  if (relay && onlineId) {
+    // A query, not a hash: the guard passes it through the hub's frame (see online.ts).
+    const shareUrl = `${location.origin}${location.pathname}?game=${onlineId}`;
+    const linkBox = h('input', { readOnly: true, value: shareUrl, onfocus: (e: Event) => (e.target as HTMLInputElement).select() }) as HTMLInputElement;
+    invite.append(h('h3', {}, 'Invite a friend'), h('p.hint', {}, 'Send them this link. The game starts when they open it.'),
+      h('div.row', {}, linkBox, h('button', { onclick: () => { void navigator.clipboard?.writeText(shareUrl).then(() => toast('Link copied.'), () => linkBox.select()); } }, 'Copy')));
+    relay.onLink = (l) => { link = l; render(false); };
+    relay.onFatal = () => {
+      el.querySelector('.game')!.replaceWith(h('div.panel.lost', {}, h('h2', {}, 'No such game'),
+        h('p', {}, 'This game does not exist, or it ended a while ago.'), h('a.button.primary', { href: '#online' }, 'Play online')));
+    };
+    relay.onMessage = (m) => {
+      if (m.t === 'error') {
+        toast(m.message);
+        sending = false;
+        if (view?.spell) resync(view.spell.acts, true);
+        return;
+      }
+      if (!m.game.spell) return;
+      const first = !view;
+      view = m.game;
+      you = m.you;
+      skew = Date.now() - view.now;
+      seed = m.game.spell.seed;
+      sending = false;
+      if (first) board.setOrientation(you ?? 'w');
+      // The first view brings the whole game so far, without sounds or slides.
+      resync(m.game.spell.acts, first);
+      if (view.rematchId) { location.hash = `#online/${view.rematchId}`; return; }
+      if (view.status === 'over') finish();
+    };
   }
 
   const keys = (e: KeyboardEvent) => {
@@ -531,6 +732,6 @@ function gameScreen(saved: Saved): Screen {
 
   return {
     el,
-    dispose() { token++; window.removeEventListener('keydown', keys); for (const n of document.querySelectorAll('.flung, .meteor')) n.remove(); },
+    dispose() { token++; clearInterval(clockTimer); relay?.close(); window.removeEventListener('keydown', keys); for (const n of document.querySelectorAll('.flung, .meteor')) n.remove(); },
   };
 }

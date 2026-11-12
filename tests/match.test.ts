@@ -134,3 +134,105 @@ describe('online ratings', () => {
     expect(categoryOf('30+0')).toBe('classical');
   });
 });
+
+describe('Match: Spell Chess', () => {
+  const sq = (n: string) => n.charCodeAt(0) - 97 + (Number(n[1]) - 1) * 8;
+  const mv = (uci: string) => ({ k: 'm', from: sq(uci.slice(0, 2)), to: sq(uci.slice(2, 4)) });
+  const spell = (now = 0) => Match.create({ id: 'abcd1234', tc: '3+2', rated: true, seats: { w: seat('W'), b: seat('B') }, variant: 'spell', seed: 9 }, now);
+  const n = (m: Match) => m.s.acts!.length;
+
+  it('is never rated, and sends the seed and actions instead of moves', () => {
+    const m = spell();
+    expect(m.s.rated).toBe(false);
+    expect(m.act('W', mv('e2e4'), 0, 1000)).toBeNull();
+    const v = m.view(1000);
+    expect(v.variant).toBe('spell');
+    expect(v.spell).toEqual({ seed: 9, acts: [{ k: 'm', from: 12, to: 28 }] });
+    expect(v.moves).toEqual([]);
+    expect(v.turn).toBe('b');
+    expect(Match.create({ id: 'x', tc: '3+2', rated: true, seats: { w: seat('W'), b: seat('B') } }, 0).view(0).variant).toBeUndefined();
+  });
+
+  it('rejects out-of-turn, illegal, malformed and god actions, and ignores resends', () => {
+    const m = spell();
+    expect(m.act('B', mv('e7e5'), 0, 1)).toBe('Not your turn.');
+    expect(m.act('X', mv('e2e4'), 0, 1)).toBe('You are watching this game.');
+    expect(m.act('W', mv('e2e5'), 0, 1)).toBe('Illegal action.');
+    expect(m.act('W', { k: 'g', p: 'flick', sq: 59 }, 0, 1)).toBe('Illegal action.');
+    expect(m.act('W', { k: 'g', p: 'wish', spell: 'smite', c: 'w' }, 0, 1)).toBe('Illegal action.');
+    expect(m.act('W', { k: 'm', from: 12, to: 'x' }, 0, 1)).toBe('Illegal action.');
+    expect(m.act('W', { k: 'm', from: 12.5, to: 28 }, 0, 1)).toBe('Illegal action.');
+    expect(m.act('W', { k: 'c', cast: { spell: 'blink', at: [1] } }, 0, 1)).toBe('Illegal action.');
+    expect(m.act('W', { k: 'c', cast: { spell: 'smite', at: [52, -1] } }, 0, 1)).toBe('Illegal action.');
+    expect(m.act('W', null, 0, 1)).toBe('Illegal action.');
+    expect(m.act('W', { k: 'e' }, 0, 1)).toBe('Illegal action.');
+    expect(m.move('W', 'e2e4', 0, 1)).toBe('Illegal move.');
+    expect(n(m)).toBe(0);
+    expect(m.act('W', mv('e2e4'), 0, 1)).toBeNull();
+    expect(m.act('W', mv('e2e4'), 0, 2)).toBeNull(); // resend
+    expect(n(m)).toBe(1);
+    expect(spell().move('W', 'e2e4', 0, 1)).toBe('Illegal move.');
+    expect(game().act('W', mv('e2e4'), 0, 1)).toBe('This is not a Spell Chess game.');
+  });
+
+  it('keeps the clock running through a turn and adds the increment when it passes', () => {
+    const m = spell();
+    m.act('W', mv('e2e4'), n(m), 0);
+    m.act('B', mv('d7d5'), n(m), 0);
+    expect(m.running).toBe(true);
+    // White captures after 5 s and draws Frost Nova: still White's turn, clock still running.
+    expect(m.act('W', mv('e4d5'), n(m), 5000)).toBeNull();
+    expect(m.spell!.state.hands.w).toEqual(['frost']);
+    expect(m.turn).toBe('w');
+    expect(m.s.clocks.w).toBe(180_000);
+    expect(m.left('w', 8000)).toBe(172_000);
+    expect(m.act('B', mv('d8d5'), n(m), 8000)).toBe('Not your turn.');
+    // The cast 4 s later ends the turn: 180 - 9 + 2.
+    expect(m.act('W', { k: 'c', cast: { spell: 'frost', at: [sq('c7')] } }, n(m), 9000)).toBeNull();
+    expect(m.turn).toBe('b');
+    expect(m.s.clocks.w).toBe(173_000);
+    expect(m.s.turnStart).toBe(9000);
+    expect(m.deadline()).toBe(189_000);
+    // The frozen queen may not take back.
+    expect(m.act('B', mv('d8d5'), n(m), 9500)).toBe('Illegal action.');
+  });
+
+  it('flags on time whatever the material, and aborts without a first move', () => {
+    const m = spell();
+    expect(m.tick(FIRST_MOVE_MS)).toBe(true);
+    expect(m.s.result?.reason).toBe('aborted');
+    const t = spell();
+    t.act('W', mv('e2e4'), n(t), 0); t.act('B', mv('e7e5'), n(t), 0);
+    expect(t.act('W', mv('g1f3'), n(t), 200_000)).toBeNull();
+    expect(n(t)).toBe(2);
+    expect(t.s.result).toEqual({ winner: 'b', reason: 'timeout' });
+    expect(t.ratable).toBe(false);
+  });
+
+  it('ends on checkmate and survives being stored and reloaded', () => {
+    let m = spell();
+    for (const [pid, u] of [['W', 'f2f3'], ['B', 'e7e5'], ['W', 'g2g4']] as const) expect(m.act(pid, mv(u), n(m), 0)).toBeNull();
+    m = new Match(JSON.parse(JSON.stringify(m.s)));
+    expect(m.turn).toBe('b');
+    expect(m.act('B', mv('d8h4'), n(m), 0)).toBeNull();
+    expect(m.s.status).toBe('over');
+    expect(m.s.result).toEqual({ winner: 'b', reason: 'checkmate' });
+    expect(m.act('W', mv('e1f2'), n(m), 0)).toBe('The game is not on.');
+    expect(new Match(JSON.parse(JSON.stringify(m.s))).spell!.state.result?.reason).toBe('checkmate');
+  });
+
+  it('resign, draw offers and rematch work as in standard chess', () => {
+    const m = spell();
+    m.act('W', mv('e2e4'), n(m), 0); m.act('B', mv('e7e5'), n(m), 0);
+    expect(m.draw('W', 10)).toBeNull();
+    expect(m.s.drawOffer).toBe('w');
+    m.act('W', mv('g1f3'), n(m), 15);
+    expect(m.s.drawOffer).toBe('w');
+    m.act('B', mv('g8f6'), n(m), 20); // moving on declines
+    expect(m.s.drawOffer).toBeNull();
+    expect(m.resign('W', 30)).toBeNull();
+    expect(m.s.result).toEqual({ winner: 'b', reason: 'resignation' });
+    expect(m.rematch('W')).toBe(false);
+    expect(m.rematch('B')).toBe(true);
+  });
+});

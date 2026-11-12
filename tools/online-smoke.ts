@@ -146,6 +146,49 @@ const all = (g: { c: Game }[], t: (v: GameView) => boolean) => Promise.all(g.map
   c.close();
 }
 
+// 4b. Spell Chess: its own queue, actions instead of moves, and no god powers.
+{
+  const sq = (n: string) => n.charCodeAt(0) - 97 + (Number(n[1]) - 1) * 8;
+  const mv = (uci: string) => ({ k: 'm', from: sq(uci.slice(0, 2)), to: sq(uci.slice(2, 4)) });
+  const a = player(), b = player(), plain = player();
+  const la = await lobbyFor(a), lb = await lobbyFor(b), lp = await lobbyFor(plain);
+  lp.send({ t: 'seek', tc: '1+0', rated: false });
+  await lp.next('seeking');
+  la.send({ t: 'seek', tc: '1+0', rated: true, variant: 'spell' });
+  const seeking = await la.next('seeking');
+  check(seeking.variant === 'spell' && !seeking.rated, 'a Spell Chess seek is casual');
+  const counts = await lp.next('counts', (m) => Boolean(m.spell?.['1+0']));
+  check(counts.spell?.['1+0'] === 1 && counts.seeking['1+0'] === 1, 'the two queues are counted apart');
+  lb.send({ t: 'seek', tc: '1+0', rated: false, variant: 'spell' });
+  const [ma, mb] = await Promise.all([la.next('matched'), lb.next('matched')]);
+  check(ma.id === mb.id, 'Spell Chess seekers are paired with each other, not with the chess seeker');
+  check(!lp.inbox.some((m) => m.t === 'matched'), 'the chess seeker is still waiting');
+  la.close(); lb.close(); lp.close();
+  const ga = await join(ma.id, a), gb = await join(ma.id, b);
+  const w = ga.you === 'w' ? ga : gb, bl = ga.you === 'w' ? gb : ga;
+  check(w.game.variant === 'spell' && typeof w.game.spell?.seed === 'number' && w.game.spell.acts.length === 0, 'the game carries a seed and an empty action list');
+  const acts = (v: GameView) => v.spell?.acts.length ?? 0;
+  w.c.send({ t: 'move', uci: 'e2e4', ply: 0 });
+  check((await w.c.next('error')).message, 'plain chess moves are refused in a Spell Chess game');
+  w.c.send({ t: 'act', act: { k: 'g', p: 'flick', sq: sq('d8') }, n: 0 });
+  check((await w.c.next('error')).message === 'Illegal action.', 'god powers are refused');
+  w.c.send({ t: 'act', act: mv('e2e4'), n: 0 }); await all([w, bl], (v) => acts(v) === 1);
+  bl.c.send({ t: 'act', act: mv('d7d5'), n: 1 }); await all([w, bl], (v) => acts(v) === 2 && v.running);
+  w.c.send({ t: 'act', act: mv('e4d5'), n: 2 });
+  const [cap] = await all([w, bl], (v) => acts(v) === 3);
+  check(cap.game.turn === 'w' || cap.game.turn === 'b', 'the view says whose clock runs');
+  if (cap.game.turn === 'w') { w.c.send({ t: 'act', act: { k: 'e' }, n: 3 }); await all([w, bl], (v) => v.turn === 'b'); }
+  bl.c.send({ t: 'resign' });
+  const [end] = await all([w, bl], (v) => v.status === 'over');
+  check(end.game.result?.winner === 'w' && !end.game.result.change, 'resigning ends it, with no rating change');
+  w.c.send({ t: 'rematch' }); await all([w, bl], (v) => v.rematchOffer !== null);
+  bl.c.send({ t: 'rematch' });
+  const [re] = await all([w, bl], (v) => Boolean(v.rematchId));
+  const next = await join(re.game.rematchId!, a);
+  check(next.game.variant === 'spell' && next.game.spell?.seed !== end.game.spell?.seed, 'a rematch is Spell Chess again, with a new shuffle');
+  w.c.close(); bl.c.close(); next.c.close();
+}
+
 // 5. Nobody moves: the Durable Object's alarm aborts the game after FIRST_MOVE_MS.
 if (!process.env.QUICK) {
   const { w, b } = await quickMatch(player(), player(), false);

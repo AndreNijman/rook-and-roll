@@ -12,17 +12,18 @@ import { Relay, type Link } from '../net';
 import { h, toast } from '../ui/dom';
 import { currentTheme, modal, moveList, playerBar, playerPortrait, topbar } from '../ui/parts';
 import type { Screen } from '../main';
+import { spellOnlineScreen } from './spell';
 import {
   CATEGORIES, CLAIM_MS, TIME_CONTROLS, categoryOf,
   type GameClientMsg, type GameServerMsg, type GameView, type LobbyClientMsg, type LobbyServerMsg,
-  type PlayerInfo, type Rated, type Side, type TimeControl,
+  type PlayerInfo, type Rated, type Side, type TimeControl, type Variant,
 } from '../../shared/online';
 
 const PREFS = 'rookroll:online';
-interface Prefs { tc: TimeControl; rated: boolean; friendTc: TimeControl; side: Side | 'random' }
+interface Prefs { tc: TimeControl; rated: boolean; friendTc: TimeControl; side: Side | 'random'; variant: Variant }
 
 function prefs(): Prefs {
-  const d: Prefs = { tc: '5+3', rated: true, friendTc: '10+5', side: 'random' };
+  const d: Prefs = { tc: '5+3', rated: true, friendTc: '10+5', side: 'random', variant: 'standard' };
   try { return { ...d, ...JSON.parse(localStorage.getItem(PREFS) || '{}') }; } catch { return d; }
 }
 function savePrefs(p: Prefs): void {
@@ -38,8 +39,14 @@ export function onlineLobby(): Screen {
   const p = prefs();
   const relay = new Relay<LobbyServerMsg, LobbyClientMsg>({ lobby: '1' });
   let account = false;
-  let seeking: { tc: TimeControl; rated: boolean; since: number; m: ReturnType<typeof modal>; clock: HTMLElement } | null = null;
+  let seeking: { tc: TimeControl; rated: boolean; variant: Variant; since: number; m: ReturnType<typeof modal>; clock: HTMLElement } | null = null;
   let counts: Partial<Record<TimeControl, number>> = {};
+  let spellCounts: Partial<Record<TimeControl, number>> = {};
+  // Spell Chess is offered once the relay says it can host it.
+  let canSpell = false;
+  const variant = (): Variant => (canSpell && p.variant === 'spell' ? 'spell' : 'standard');
+  const variantRow = h('div.chips.variants.hidden');
+  const friendHint = h('p.hint');
 
   const who = h('p.hint', {}, 'Connecting to the game server…');
   const ratings = h('div.ratings');
@@ -48,14 +55,23 @@ export function onlineLobby(): Screen {
   const grid = h('div.tc-grid');
   const friendTc = h('div.chips');
   const sideRow = h('div.chips');
-  const createBtn = h('button.primary', { onclick: () => relay.send({ t: 'friend', tc: p.friendTc, side: p.side }) }, 'Create link');
+  const createBtn = h('button.primary', { onclick: () => relay.send({ t: 'friend', tc: p.friendTc, side: p.side, variant: variant() }) }, 'Create link');
   const online = h('p.hint');
 
   function drawGrid(): void {
+    const spell = variant() === 'spell';
+    const waiting = spell ? spellCounts : counts;
+    variantRow.classList.toggle('hidden', !canSpell);
+    variantRow.replaceChildren(...(['standard', 'spell'] as const).map((v) =>
+      h('button.chip', { class: v === variant() ? 'on' : '', onclick: () => { p.variant = v; savePrefs(p); drawGrid(); } }, v === 'spell' ? 'Spell Chess' : 'Chess')));
+    ratedRow.classList.toggle('hidden', !account || spell);
+    friendHint.textContent = spell
+      ? 'Make a link and send it. The first person to open it plays you at Spell Chess. Spell Chess games are casual.'
+      : 'Make a link and send it. The first person to open it plays you. Friend games are casual.';
     grid.replaceChildren(...TIME_CONTROLS.map((tc) =>
       h('button.tc', { onclick: () => seek(tc) },
         h('b', {}, tc), h('span', {}, categoryOf(tc)),
-        counts[tc] ? h('span.count', {}, `${counts[tc]} waiting`) : null)));
+        waiting[tc] ? h('span.count', {}, `${waiting[tc]} waiting`) : null)));
     friendTc.replaceChildren(...TIME_CONTROLS.map((tc) =>
       h('button.chip', { class: tc === p.friendTc ? 'on' : '', onclick: () => { p.friendTc = tc; savePrefs(p); drawGrid(); } }, tc)));
     sideRow.replaceChildren(...(['w', 'random', 'b'] as const).map((s) =>
@@ -64,16 +80,17 @@ export function onlineLobby(): Screen {
   }
 
   function seek(tc: TimeControl): void {
-    const rated = account && p.rated;
-    if (!relay.send({ t: 'seek', tc, rated })) { toast('Not connected yet.'); return; }
+    const v = variant();
+    const rated = account && p.rated && v === 'standard';
+    if (!relay.send({ t: 'seek', tc, rated, variant: v })) { toast('Not connected yet.'); return; }
     p.tc = tc; savePrefs(p);
     seeking?.m.close();
     const clock = h('span.hint', {}, '0:00');
     const m = modal(h('h2', {}, 'Finding an opponent'),
-      h('p', {}, `${tc} · ${rated ? 'rated' : 'casual'} · `, clock),
+      h('p', {}, `${v === 'spell' ? 'Spell Chess · ' : ''}${tc} · ${rated ? 'rated' : 'casual'} · `, clock),
       h('div.spinner', {}, h('span'), h('span'), h('span')),
       h('div.row.end', {}, h('button', { onclick: cancel }, 'Cancel')));
-    seeking = { tc, rated, since: Date.now(), m, clock };
+    seeking = { tc, rated, variant: v, since: Date.now(), m, clock };
   }
 
   function cancel(): void {
@@ -92,18 +109,20 @@ export function onlineLobby(): Screen {
   relay.onMessage = (m) => {
     if (m.t === 'hello') {
       account = m.account;
+      canSpell = Boolean(m.variants?.includes('spell'));
       who.replaceChildren(account
         ? `Signed in as ${m.name}.`
         : h('span', {}, `Playing as ${m.name}. `, h('a', { href: loginUrl(), target: '_top' }, 'Sign in'), ' to play rated games.'));
-      ratedRow.classList.toggle('hidden', !account);
       ratings.replaceChildren(...(account ? CATEGORIES.map((c) => {
         const r = m.ratings[c];
         return h('div.rating-chip', {}, h('span', {}, c), h('b', {}, r ? ratingText(r) : '1500?'), h('span.hint', {}, r ? `${r.games} games` : 'new'));
       }) : []));
       // A reconnect drops the seek on the server: ask again.
-      if (seeking) relay.send({ t: 'seek', tc: seeking.tc, rated: seeking.rated });
+      if (seeking) relay.send({ t: 'seek', tc: seeking.tc, rated: seeking.rated, variant: seeking.variant });
+      drawGrid();
     } else if (m.t === 'counts') {
       counts = m.seeking;
+      spellCounts = m.spell ?? {};
       online.textContent = `${m.online} ${m.online === 1 ? 'player' : 'players'} in the lobby.`;
       drawGrid();
     } else if (m.t === 'matched' || m.t === 'created') {
@@ -119,12 +138,12 @@ export function onlineLobby(): Screen {
     h('main.online-main', {},
       h('section.panel', {},
         h('h2', {}, 'Quick match'),
-        who, ratings,
+        who, variantRow, ratings,
         h('div.row.top', {}, h('h3', {}, 'Time control'), ratedRow),
         grid, online),
       h('section.panel', {},
         h('h2', {}, 'Play a friend'),
-        h('p.hint', {}, 'Make a link and send it. The first person to open it plays you. Friend games are casual.'),
+        friendHint,
         h('h3', {}, 'Time control'), friendTc,
         h('h3', {}, 'You play'), sideRow,
         h('div.row', { style: 'margin-top:14px' }, createBtn))));
@@ -144,6 +163,7 @@ export function onlineGame(id: string): Screen {
   let shownEnd = false;
   let pending: string | null = null;
   let link: Link = 'connecting';
+  let spell: Screen | null = null;
 
   const host = h('div.board-host');
   const board = new BoardView(host);
@@ -378,6 +398,15 @@ export function onlineGame(id: string): Screen {
       h('p', {}, 'This game does not exist, or it ended a while ago.'), h('a.button.primary', { href: '#online' }, 'Play online')));
   };
   relay.onMessage = (m) => {
+    if (m.t === 'game' && !g && m.game.variant === 'spell') {
+      // A Spell Chess game has its own screen, with its own connection.
+      relay.close();
+      clearInterval(clockTimer);
+      window.removeEventListener('keydown', keys);
+      spell = spellOnlineScreen(id);
+      el.replaceWith(spell.el);
+      return;
+    }
     if (m.t === 'error') {
       toast(m.message);
       pending = null;
@@ -410,5 +439,5 @@ export function onlineGame(id: string): Screen {
   };
   window.addEventListener('keydown', keys);
 
-  return { el, dispose() { clearInterval(clockTimer); window.removeEventListener('keydown', keys); relay.close(); } };
+  return { el, dispose() { clearInterval(clockTimer); window.removeEventListener('keydown', keys); relay.close(); spell?.dispose?.(); } };
 }

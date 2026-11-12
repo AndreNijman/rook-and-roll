@@ -20,7 +20,7 @@ import { current, fresh, rateGame, shown, type Stored } from '../server/ratings'
 import {
   CATEGORIES, GAME_ID, categoryOf, isTimeControl,
   type Category, type GameClientMsg, type GameServerMsg, type LobbyClientMsg, type LobbyServerMsg,
-  type PlayerInfo, type Side, type TimeControl,
+  type PlayerInfo, type Side, type TimeControl, type Variant,
 } from '../shared/online';
 
 export interface Env {
@@ -29,6 +29,8 @@ export interface Env {
 }
 
 const MAX_FRAME = 2048;
+const variantOf = (v: unknown): Variant => (v === 'spell' ? 'spell' : 'standard');
+const newSeed = () => crypto.getRandomValues(new Uint32Array(1))[0];
 const GUEST = /^[A-Za-z0-9_-]{16,64}$/;
 
 interface Who { pid: string; name: string; account: boolean }
@@ -99,7 +101,7 @@ export default {
 
 // ---------------------------------------------------------------- lobby
 
-interface Seek { tc: TimeControl; rated: boolean; since: number; rating: number }
+interface Seek { tc: TimeControl; rated: boolean; since: number; rating: number; variant: Variant }
 interface LobbyTag extends Who { seek?: Seek }
 
 /** Rated seekers are paired within this many points, widening the longer they wait. */
@@ -161,7 +163,7 @@ export class Lobby extends DurableObject<Env> {
       const r = this.stored(who.pid, cat, now);
       if (r) ratings[cat] = { ...shown(r), games: r.games };
     }
-    send(server, { t: 'hello', name: who.name, account: who.account, ratings });
+    send(server, { t: 'hello', name: who.name, account: who.account, ratings, variants: ['spell'] });
     this.counts();
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -174,22 +176,24 @@ export class Lobby extends DurableObject<Env> {
       delete tag.seek;
       ws.serializeAttachment(tag);
     } else if (msg.t === 'seek' && isTimeControl(msg.tc)) {
-      const rated = Boolean(msg.rated) && tag.account;
+      const variant = variantOf(msg.variant);
+      // Ratings are for standard chess; Spell Chess is always casual.
+      const rated = Boolean(msg.rated) && tag.account && variant === 'standard';
       const rating = rated ? (this.stored(tag.pid, categoryOf(msg.tc), Date.now())?.rating ?? 1500) : 1500;
       // One seek per player, whichever tab it came from.
       for (const other of this.ctx.getWebSockets()) {
         const t = other.deserializeAttachment() as LobbyTag;
         if (other !== ws && t.pid === tag.pid && t.seek) { delete t.seek; other.serializeAttachment(t); }
       }
-      tag.seek = { tc: msg.tc, rated, since: Date.now(), rating };
+      tag.seek = { tc: msg.tc, rated, since: Date.now(), rating, variant };
       ws.serializeAttachment(tag);
-      send(ws, { t: 'seeking', tc: msg.tc, rated });
+      send(ws, { t: 'seeking', tc: msg.tc, rated, variant });
       await this.match();
     } else if (msg.t === 'friend' && isTimeControl(msg.tc)) {
       const side: Side = msg.side === 'w' || msg.side === 'b' ? msg.side : Math.random() < 0.5 ? 'w' : 'b';
       const id = newId();
       const me: Seat = { pid: tag.pid, info: { name: tag.name, account: tag.account } };
-      await game(this.env, id).init({ id, tc: msg.tc, rated: false, seats: side === 'w' ? { w: me, b: null } : { w: null, b: me } });
+      await game(this.env, id).init({ id, tc: msg.tc, rated: false, seats: side === 'w' ? { w: me, b: null } : { w: null, b: me }, variant: variantOf(msg.variant), seed: newSeed() });
       send(ws, { t: 'created', id });
     }
     this.counts();
@@ -215,13 +219,14 @@ export class Lobby extends DurableObject<Env> {
     for (const a of seekers) {
       if (taken.has(a.ws)) continue;
       const fits = seekers.filter((b) => b.ws !== a.ws && !taken.has(b.ws) && b.tag.pid !== a.tag.pid &&
-        b.tag.seek.tc === a.tag.seek.tc && b.tag.seek.rated === a.tag.seek.rated &&
+        b.tag.seek.tc === a.tag.seek.tc && b.tag.seek.rated === a.tag.seek.rated && variantOf(b.tag.seek.variant) === variantOf(a.tag.seek.variant) &&
         (!a.tag.seek.rated || Math.abs(a.tag.seek.rating - b.tag.seek.rating) <=
           Math.min(spread(now - a.tag.seek.since), spread(now - b.tag.seek.since))));
       const b = fits.sort((x, y) => Math.abs(x.tag.seek.rating - a.tag.seek.rating) - Math.abs(y.tag.seek.rating - a.tag.seek.rating))[0];
       if (!b) continue;
       taken.add(a.ws).add(b.ws);
       const { tc, rated } = a.tag.seek;
+      const variant = variantOf(a.tag.seek.variant);
       const cat = categoryOf(tc);
       const seat = async (t: LobbyTag): Promise<Seat> => ({
         pid: t.pid,
@@ -229,7 +234,7 @@ export class Lobby extends DurableObject<Env> {
       });
       const [sa, sb] = [await seat(a.tag), await seat(b.tag)];
       const id = newId();
-      await game(this.env, id).init({ id, tc, rated, seats: Math.random() < 0.5 ? { w: sa, b: sb } : { w: sb, b: sa } });
+      await game(this.env, id).init({ id, tc, rated, seats: Math.random() < 0.5 ? { w: sa, b: sb } : { w: sb, b: sa }, variant, seed: newSeed() });
       for (const s of [a, b]) {
         delete (s.tag as LobbyTag).seek;
         s.ws.serializeAttachment(s.tag);
@@ -244,14 +249,17 @@ export class Lobby extends DurableObject<Env> {
   private counts(): void {
     const sockets = this.ctx.getWebSockets();
     const seeking: Partial<Record<TimeControl, number>> = {};
+    const spell: Partial<Record<TimeControl, number>> = {};
     const online = new Set<string>();
     for (const ws of sockets) {
       const t = ws.deserializeAttachment() as LobbyTag | null;
       if (!t?.pid) continue;
       online.add(t.pid);
-      if (t.seek) seeking[t.seek.tc] = (seeking[t.seek.tc] ?? 0) + 1;
+      // Older stored seeks have no variant: they are standard.
+      const tally = t.seek?.variant === 'spell' ? spell : seeking;
+      if (t.seek) tally[t.seek.tc] = (tally[t.seek.tc] ?? 0) + 1;
     }
-    for (const ws of sockets) send(ws, { t: 'counts', seeking, online: online.size });
+    for (const ws of sockets) send(ws, { t: 'counts', seeking, spell, online: online.size });
   }
 }
 
@@ -272,7 +280,7 @@ export class Game extends DurableObject<Env> {
   }
 
   /** Set up a new game; false if this id is already in use. */
-  async init(o: { id: string; tc: TimeControl; rated: boolean; seats: Record<Side, Seat | null> }): Promise<boolean> {
+  async init(o: { id: string; tc: TimeControl; rated: boolean; seats: Record<Side, Seat | null>; variant?: Variant; seed?: number }): Promise<boolean> {
     if (this.m) return false;
     this.m = Match.create(o, Date.now());
     await this.save();
@@ -308,6 +316,7 @@ export class Game extends DurableObject<Env> {
     let error: string | null = null;
     switch (msg.t) {
       case 'move': error = m.move(pid, String(msg.uci), Number(msg.ply), now); break;
+      case 'act': error = m.act(pid, msg.act, Number(msg.n), now); break;
       case 'resign': error = m.resign(pid, now); break;
       case 'abort': error = m.abortBy(pid, now); break;
       case 'draw': error = m.draw(pid, now); break;
@@ -371,7 +380,7 @@ export class Game extends DurableObject<Env> {
       info: { ...s.info, rating: m.s.rated ? await lobby(this.env).ratingOf(s.pid, cat) : undefined },
     });
     const w = await swap(m.s.seats.b!), b = await swap(m.s.seats.w!);
-    await game(this.env, id).init({ id, tc: m.s.tc, rated: m.s.rated, seats: { w, b } });
+    await game(this.env, id).init({ id, tc: m.s.tc, rated: m.s.rated, seats: { w, b }, variant: m.s.variant, seed: newSeed() });
     m.s.rematchId = id;
     m.s.rematchOffer = null;
   }

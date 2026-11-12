@@ -16,8 +16,8 @@ Pixel-art chess for [games.andrenijman.com](https://games.andrenijman.com), serv
   rematches and server-kept clocks.
 
 - **Spell Chess**: chess with a hand of spell cards, against a three-strength bot or a
-  friend on the same board. Every capture draws from a personal deck of 18 spells; hold
-  three, cast one a turn. Not online yet.
+  friend on the same board, or online (quick match or a friend link, always casual). Every
+  capture draws from a personal deck of 18 spells; hold three, cast one a turn.
 
 Signed-in games accounts keep their profile (board theme, bot record, puzzle rating) on
 the games guard at `/_guard/profile`; guests keep it in the browser.
@@ -59,6 +59,10 @@ spells that move or remove pieces need their own move generator):
 - `bot.ts`: a small alpha-beta search; spells are scored cast vs. don't cast.
 - `game.ts`: a game as a seed plus a list of actions. Replaying the list gives takebacks,
   the saved game and the move log, and is the record an online relay would pass around.
+
+Online, a game's `variant` is `spell`: the relay keeps the seed and the action list, checks
+every action with the same engine (`Match.act`), and sends both to the players. Spell Chess
+has its own quick-match queue and is never rated. God powers are refused by the relay.
 
 The screen is `src/client/modes/spell.ts`. The board view only gained optional overlays
 (`marks`, `targets`, translucent pieces), which the other modes never set.
