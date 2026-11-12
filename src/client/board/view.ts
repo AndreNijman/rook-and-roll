@@ -8,7 +8,7 @@ import { THEMES, drawSquare, glyph, type BoardTheme } from '../art/board';
 import { SPRITE, drawPiece, type PieceType, type Side } from '../art/pieces';
 import { INK, toCanvas } from '../art/pixel';
 
-export interface Piece { type: PieceType; color: Side }
+export interface Piece { type: PieceType; color: Side; /** Drawn translucent (Spell Chess). */ ghost?: boolean }
 export type Pieces = Map<Square, Piece>;
 export interface Arrow { from: Square; to: Square; color?: string }
 
@@ -18,7 +18,14 @@ export interface BoardState {
   dests?: Map<Square, Square[]>;
   lastMove?: [Square, Square] | null;
   check?: Square | null;
+  /** Variant overlays (Spell Chess): effects drawn on squares. */
+  marks?: Mark[];
+  /** When set, a click on one of these squares calls onPick and pieces cannot be moved. */
+  targets?: Square[] | null;
 }
+
+export type MarkKind = 'frost' | 'wall' | 'aegis' | 'trap' | 'alarm' | 'count';
+export interface Mark { sq: Square; kind: MarkKind; /** Turns left, for traps and counters. */ n?: number }
 
 const S = SPRITE;
 const W = S * 8;
@@ -35,6 +42,7 @@ interface Slide { piece: Piece; from: Square; to: Square }
 export class BoardView {
   readonly canvas = document.createElement('canvas');
   onMove: (from: Square, to: Square, promotion?: PieceType) => void = () => {};
+  onPick: (sq: Square) => void = () => {};
 
   private ctx: CanvasRenderingContext2D;
   private layer = document.createElement('canvas');
@@ -42,7 +50,7 @@ export class BoardView {
   private bg: HTMLCanvasElement | null = null;
   private sprites = new Map<string, HTMLCanvasElement>();
   private orientation: Side = 'w';
-  private state: Required<BoardState> = { pieces: new Map(), dests: new Map(), lastMove: null, check: null };
+  private state: Required<BoardState> = { pieces: new Map(), dests: new Map(), lastMove: null, check: null, marks: [], targets: null };
   private arrows: Arrow[] = [];
   private drawn: Arrow[] = [];
   private selected: Square | null = null;
@@ -76,7 +84,7 @@ export class BoardView {
 
   set(state: BoardState, animate = true): void {
     const prev = this.state.pieces;
-    this.state = { dests: new Map(), lastMove: null, check: null, ...state };
+    this.state = { dests: new Map(), lastMove: null, check: null, marks: [], targets: null, ...state };
     if (this.selected && !this.state.dests.has(this.selected)) this.selected = null;
     this.promo = null;
     this.slides = animate ? this.diff(prev, state.pieces) : [];
@@ -95,6 +103,14 @@ export class BoardView {
   flip(): void { this.setOrientation(this.orientation === 'w' ? 'b' : 'w'); }
 
   setTheme(theme: BoardTheme): void { this.theme = theme; this.bg = null; this.draw(); }
+
+  /** Where a square is on screen, for effects drawn outside the canvas. */
+  squareRect(sq: Square): DOMRect {
+    const b = this.canvas.getBoundingClientRect();
+    const [x, y] = this.xy(sq);
+    const k = b.width / W;
+    return new DOMRect(b.left + x * k, b.top + y * k, S * k, S * k);
+  }
 
   /** Arrows owned by the game (hints, the engine's best line). */
   setArrows(arrows: Arrow[]): void { this.arrows = arrows; this.draw(); }
@@ -174,6 +190,10 @@ export class BoardView {
       return;
     }
     if (!sq) return;
+    if (this.state.targets) {
+      if (this.state.targets.includes(sq)) this.onPick(sq);
+      return;
+    }
     if (this.selected && this.state.dests.get(this.selected)?.includes(sq)) {
       this.tryMove(this.selected, sq);
       return;
@@ -305,8 +325,9 @@ export class BoardView {
 
   private paint(): void {
     const g = this.ctx;
-    const { pieces, dests, lastMove, check } = this.state;
+    const { pieces, dests, lastMove, check, marks, targets } = this.state;
     g.drawImage(this.background(), 0, 0);
+    for (const m of marks) this.paintUnder(m);
 
     if (lastMove) for (const sq of lastMove) this.tint(sq, this.theme.moved, 0.42);
     if (this.selected) this.tint(this.selected, this.theme.select, 0.5);
@@ -320,6 +341,7 @@ export class BoardView {
       if (sliding.has(sq)) continue;
       const [x, y] = this.xy(sq);
       if (this.drag?.moved && this.drag.from === sq) g.globalAlpha = 0.3;
+      else if (p.ghost) g.globalAlpha = 0.55;
       g.drawImage(this.sprite(p), x, y);
       g.globalAlpha = 1;
     }
@@ -327,6 +349,9 @@ export class BoardView {
       const [x0, y0] = this.xy(s.from), [x1, y1] = this.xy(s.to);
       g.drawImage(this.sprite(s.piece), Math.round(x0 + (x1 - x0) * ease), Math.round(y0 + (y1 - y0) * ease));
     }
+
+    for (const m of marks) this.paintOver(m);
+    if (targets) for (const sq of targets) this.paintTarget(sq, pieces.has(sq));
 
     const from = this.drag?.moved ? this.drag.from : this.selected;
     if (from) for (const to of dests.get(from) ?? []) this.paintDest(to, pieces.has(to));
@@ -356,6 +381,79 @@ export class BoardView {
       g.fillRect(x + i, y + i, S - i * 2, S - i * 2);
     }
     g.globalAlpha = 1;
+  }
+
+  // ---------- variant overlays ----------
+
+  /** Effects that sit on the square, under the piece. */
+  private paintUnder(m: Mark): void {
+    const [x, y] = this.xy(m.sq);
+    const g = this.ctx;
+    if (m.kind === 'frost') {
+      this.tint(m.sq, '#9ad8f8', 0.6);
+      g.fillStyle = '#ffffff';
+      for (const [dx, dy] of [[2, 3], [12, 2], [4, 12], [13, 11], [8, 7]]) { g.fillRect(x + dx, y + dy - 1, 1, 3); g.fillRect(x + dx - 1, y + dy, 3, 1); }
+    } else if (m.kind === 'wall') {
+      g.fillStyle = INK;
+      g.fillRect(x, y, S, S);
+      // Three courses of offset bricks.
+      for (let row = 0; row < 3; row++) for (let col = -1; col < 3; col++) {
+        const bx = x + col * 8 + (row % 2 ? 4 : 0) + 1, by = y + 1 + row * 5;
+        const x0 = Math.max(bx, x + 1), x1 = Math.min(bx + 7, x + S - 1);
+        if (x1 <= x0) continue;
+        g.fillStyle = (row + col) % 2 ? '#8a8490' : '#9c96a2';
+        g.fillRect(x0, by, x1 - x0, 4);
+        g.fillStyle = '#c8c0cc';
+        g.fillRect(x0, by, x1 - x0, 1);
+      }
+    } else if (m.kind === 'trap') {
+      g.fillStyle = '#7a6290';
+      for (let i = 0; i < 6; i++) { g.fillRect(x + 7 - i, y + 2 + i, 2 + i * 2, 1); g.fillRect(x + 7 - i, y + 13 - i, 2 + i * 2, 1); }
+      g.fillStyle = '#f0d060';
+      g.fillRect(x + 7, y + 4, 2, 8); g.fillRect(x + 4, y + 7, 8, 2);
+      g.fillStyle = '#7a6290';
+      g.fillRect(x + 7, y + 7, 2, 2);
+      if (m.n) this.digit(m.n, x + S - 4, y + 1, '#f0d060');
+    }
+  }
+
+  /** Effects drawn over the piece. */
+  private paintOver(m: Mark): void {
+    const [x, y] = this.xy(m.sq);
+    const g = this.ctx;
+    if (m.kind === 'aegis') {
+      g.fillStyle = '#f0d060';
+      g.globalAlpha = 0.9;
+      g.fillRect(x + 2, y, S - 4, 1); g.fillRect(x + 2, y + S - 1, S - 4, 1);
+      g.fillRect(x, y + 2, 1, S - 4); g.fillRect(x + S - 1, y + 2, 1, S - 4);
+      for (const [dx, dy] of [[1, 1], [S - 2, 1], [1, S - 2], [S - 2, S - 2]]) g.fillRect(x + dx, y + dy, 1, 1);
+      g.globalAlpha = 0.22;
+      g.fillRect(x + 1, y + 1, S - 2, S - 2);
+      g.globalAlpha = 1;
+    } else if (m.kind === 'alarm') {
+      // A red bell flag in the corner of the king's square.
+      g.fillStyle = INK;
+      g.fillRect(x + S - 6, y, 6, 7);
+      g.fillStyle = '#d8484a';
+      g.fillRect(x + S - 5, y + 1, 4, 5);
+      g.fillStyle = '#f0d060';
+      g.fillRect(x + S - 4, y + 1, 2, 3); g.fillRect(x + S - 4, y + 5, 2, 1);
+    } else if (m.kind === 'count' && m.n) {
+      g.fillStyle = INK;
+      g.fillRect(x + S - 5, y, 5, 7);
+      this.digit(m.n, x + S - 4, y + 1, '#e8e0f8');
+    }
+  }
+
+  private digit(n: number, x: number, y: number, color: string): void {
+    const rows = DIGITS[n] ?? DIGITS[0];
+    this.ctx.fillStyle = color;
+    rows.forEach((row, j) => [...row].forEach((v, i) => { if (v === '#') this.ctx.fillRect(x + i, y + j, 1, 1); }));
+  }
+
+  private paintTarget(sq: Square, occupied: boolean): void {
+    this.tint(sq, '#f0d060', occupied ? 0.38 : 0.3);
+    this.paintFrame(sq, '#f0d060');
   }
 
   private paintDest(sq: Square, capture: boolean): void {
@@ -438,6 +536,13 @@ export class BoardView {
     });
   }
 }
+
+const DIGITS: Record<number, string[]> = {
+  0: ['###', '#.#', '#.#', '#.#', '###'],
+  1: ['.#.', '##.', '.#.', '.#.', '###'],
+  2: ['##.', '..#', '.#.', '#..', '###'],
+  3: ['##.', '..#', '.#.', '..#', '##.'],
+};
 
 function inside(px: number, py: number, [a, b, c]: [number, number][]): boolean {
   const s = (p: [number, number], q: [number, number]) => (q[0] - p[0]) * (py - p[1]) - (q[1] - p[1]) * (px - p[0]);

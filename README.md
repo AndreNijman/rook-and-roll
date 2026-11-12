@@ -15,6 +15,10 @@ Pixel-art chess for [games.andrenijman.com](https://games.andrenijman.com), serv
   accounts, per bullet/blitz/rapid/classical), friend links, spectators, draw offers,
   rematches and server-kept clocks.
 
+- **Spell Chess**: chess with a hand of spell cards, against a three-strength bot or a
+  friend on the same board. Every capture draws from a personal deck of 18 spells; hold
+  three, cast one a turn. Not online yet.
+
 Signed-in games accounts keep their profile (board theme, bot record, puzzle rating) on
 the games guard at `/_guard/profile`; guests keep it in the browser.
 
@@ -43,6 +47,21 @@ The relay has no public route. games-guard reaches it over a service binding fro
 so deploy the relay (`wrangler deploy --env production`) before the guard that binds to it.
 
 The board, pieces and portraits are drawn in code (`src/client/art/`), pixel by pixel.
+
+## Spell Chess
+
+The rules are in `src/spell/`, with no DOM and no chess.js (walls, phantom pieces and
+spells that move or remove pieces need their own move generator):
+
+- `engine.ts`: the state and every rule. Decks, hands, active effects, durations, the last
+  spell cast and the shuffle's random state are all inside the JSON-serialisable `State`.
+- `spells.ts`: card names, rules text and icons.
+- `bot.ts`: a small alpha-beta search; spells are scored cast vs. don't cast.
+- `game.ts`: a game as a seed plus a list of actions. Replaying the list gives takebacks,
+  the saved game and the move log, and is the record an online relay would pass around.
+
+The screen is `src/client/modes/spell.ts`. The board view only gained optional overlays
+(`marks`, `targets`, translucent pieces), which the other modes never set.
 
 ## Engine
 
